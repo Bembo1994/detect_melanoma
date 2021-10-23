@@ -10,6 +10,6 @@ def main():
     means = dataframe["mean"].dropna()
     print("STD of means : {}\n\n".format(statistics.stdev(means)))
     print("Mean of means : {}\n\n".format(sum(means)/len(means)))
-    ds.dataset_analysis()
+    #ds.dataset_analysis()
 if __name__== "__main__" :
     main()
