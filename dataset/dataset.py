@@ -1,16 +1,17 @@
-import urllib
+from dataset.API.isic_api import ISICApi
+from utils import utils
+from tensorflow.keras.preprocessing import image_dataset_from_directory
+from collections import defaultdict
+from sklearn.model_selection import train_test_split
+from PIL import Image
+from tensorflow.keras.utils import normalize
 import os
-import csv
 import json
-import shutil
 import cv2
 import pandas as pd
 import numpy as np
-import torchvision
-from dataset.API.isic_api import ISICApi #from isic_api import ISICApi
-from utils import utils
-from torchvision import transforms
-from torch.utils.data import DataLoader
+import random
+
 
 class Dataset():
 
@@ -18,17 +19,23 @@ class Dataset():
         self.limit = utils.LIMIT_IMAGES
         self.real_path = os.path.dirname(os.path.realpath(__file__))
         self.savePath = self.real_path+"/ISICArchive/"
+        self.segmentation_path = self.savePath + "Segmentation/"
         # Initialize the API; no login is necessary for public data
         self.api = ISICApi()
         self.make_dirs(self.savePath)
         self.make_dirs(self.savePath + "benign/")
         self.make_dirs(self.savePath + "malignant/")
+        self.make_dirs(self.segmentation_path)
+        self.dataframe = None
+        self.img_for_segmentation = set()
+        self.num_sample_for_segmentation = 2000
         self.download_metadata()
         self.download_dataset()
+        self.download_mask()
 
     def make_dirs(self,path):
         if not os.path.exists(path):
-            print("Make directories : {}".format(path))
+            print("Make directory : {}".format(path))
             os.makedirs(path)
 
     def download_metadata(self):
@@ -48,9 +55,10 @@ class Dataset():
             print("File already saved : {}".format(self.savePath + "metadata.json"))
 
     def download_dataset(self):
+
         # Opening JSON file
         metadata = json.load(open(self.savePath+"metadata.json"))
-        print('Downloading images')
+        print('Checking images')
         for image in metadata:
             # controllo delle chiavi nel dizionario
             if "meta" in image and "clinical" in image["meta"] and "benign_malignant" in image["meta"]["clinical"]:
@@ -70,9 +78,7 @@ class Dataset():
                             for chunk in imageFileResp:
                                 imageFileOutputStream.write(chunk)
         print("Downloaded dataset")
-
-    def dataframe_analysis(self):
-        print("Normalize metadata")
+        print("Creating csv file")
         with open(self.savePath+"metadata.json") as f:
             df = pd.read_json(f)
         column_to_expand = ["creator", "dataset", "meta", "notes"]
@@ -82,85 +88,111 @@ class Dataset():
                 data_normalize.rename(columns={c: column + "." + c}, inplace=True)
             df.drop(column, axis=1, inplace=True)
             df = pd.concat([df, data_normalize], axis=1, join="inner")
+        self.dataframe = df
+        self.dataframe.to_csv(self.savePath+'dataframe.csv',index=False)
 
-        # Analizziamo l'età
-        ages = df["meta.clinical.age_approx"]
-        benign_malignant = df["meta.clinical.benign_malignant"]
-        bening = []
-        malignant = []
+    def download_mask(self):
+        print("Check image for segmentation")
+        for i, name in enumerate(self.dataframe["dataset.name"]):
+            if name == "SONIC":
+                self.img_for_segmentation.add(self.dataframe["_id"][i])
+        for i, name in enumerate(self.dataframe["meta.clinical.benign_malignant"]):
+            if name != "benign" and name != "malignant":
+                self.img_for_segmentation.add(self.dataframe["_id"][i])
+        self.make_dirs(self.segmentation_path+"mask/")
+        self.make_dirs(self.segmentation_path + "img/")
 
-        print("Head of dataframe : \n{}\n\n".format(df.head()))
-        print("All the keys :\n{}\n\n".format(df.keys()))
-        print("Keys with null value :\n{}\n\n".format(df.isnull().sum()))
-        print("Unique value in ages :\n{}\n\n".format(ages.unique()))
-        print("Unique value in benign_malignant column :\n{}\n\n".format(benign_malignant.unique()))
+        for i, img_id in enumerate(self.img_for_segmentation) :
+            if len(os.listdir(self.segmentation_path+"mask/")) < self.num_sample_for_segmentation and len(os.listdir(self.segmentation_path+"mask/")) == len(os.listdir(self.segmentation_path+"img/")):
+                name = self.dataframe.iloc[list(self.dataframe["_id"]).index(img_id)]["name"]
+                print(name)
+                flag = False
+                if not os.path.isfile(self.segmentation_path+"mask/%s.tiff" % name) and not os.path.isfile(self.segmentation_path+"img/%s.tiff" % name):
+                    flag = True
 
-        for i, a in enumerate(ages):
-            b_or_m = benign_malignant[i]
-            if str(a) != "nan" and str(b_or_m) != "None" and str(b_or_m) != "nan" and str(
-                    b_or_m) != "indeterminate/malignant" and str(b_or_m) != "indeterminate" and str(
-                    b_or_m) != "indeterminate/benign":
-                if b_or_m == "benign":
-                    bening.append(a)
-                else:
-                    malignant.append(a)
+                if flag :
+                    segmentation = self.api.getJson('segmentation?imageId=' + img_id)
+                    if len(segmentation)>0:
+                        imageFileResp_img = self.api.get('image/%s/download' % img_id)
 
-        print("Mean age for mole bening :\n{}\n\n".format(sum(bening) / len(bening)))
-        print("Mean age for mole malignant :\n{}\n\n".format(sum(malignant) / len(malignant)))
+                        imageFileResp_seg = self.api.get('segmentation/%s/mask' % segmentation[0]['_id'])
 
-        df["mean"] = np.nan
-        df["std"] = np.nan
+                        imageFileResp_seg.raise_for_status()
+                        imageFileResp_img.raise_for_status()
 
-        # Calcoliamo media, mediana e dev stand delle immagini e le aggiungiamo al df
-        names = list(df["name"])
-        dim = (utils.IMG_SIZE, utils.IMG_SIZE)
-        if not os.path.isfile(self.savePath+"dataframe.pkl"):
-            df_copy = df.copy()
-            dirs = ["benign","malignant"]
-            for dir in dirs:
-                print(dir)
-                for img_name in os.listdir(self.savePath + dir):
-                    if img_name[:-4] in names:
-                        pos = names.index(img_name[:-4])
-                        img = cv2.imread(self.savePath + dir + "/" + img_name)
-                        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-                        img = cv2.resize(img, dim, interpolation=cv2.INTER_CUBIC)
-                        mean, std = cv2.meanStdDev(img)
-                        df_copy.iloc[pos, df_copy.columns.get_loc('mean')] = mean[0][0]
-                        df_copy.iloc[pos, df_copy.columns.get_loc('std')] = std[0][0]
-            df_copy.to_pickle(self.savePath+"dataframe.pkl")
-            print(df_copy)
-            print("Dataframe saved")
-            return df_copy
-        else:
-            return pd.read_pickle(self.savePath + "dataframe.pkl")
+                        imageFileOutputPath_seg = os.path.join(self.segmentation_path+"mask/", '%s.tiff' % name)
+                        imageFileOutputPath_img = os.path.join(self.segmentation_path+"img/", '%s.tiff' % name)
 
-    def dataset_analysis(self):
+                        with open(imageFileOutputPath_seg, 'wb') as imageFileOutputStream_seg:
+                            for chunk in imageFileResp_seg:
+                                imageFileOutputStream_seg.write(chunk)
+                        with open(imageFileOutputPath_img, 'wb') as imageFileOutputStream_img:
+                            for chunk in imageFileResp_img:
+                                imageFileOutputStream_img.write(chunk)
 
-        transform_img = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(256),
-            transforms.ToTensor(),
-        ])
+        print("Downloaded image for segmentation")
 
-        image_data = torchvision.datasets.ImageFolder(
-            root=self.savePath, transform=transform_img
+    def get_train_val_set(self):
+        ds_train = image_dataset_from_directory(
+            self.savePath,
+            labels='inferred',
+            label_mode="binary",
+            image_size=[utils.IMG_SIZE, utils.IMG_SIZE],
+            interpolation='nearest',
+            batch_size=16,
+            shuffle=True,
+            validation_split=0.3,
+            subset='training',
+            seed=123
         )
 
-        image_data_loader = DataLoader(
-            image_data,
-            batch_size=len(image_data),
-            shuffle=False,
-            num_workers=0
+        ds_val = image_dataset_from_directory(
+            self.savePath,
+            labels='inferred',
+            label_mode="binary",
+            image_size=[utils.IMG_SIZE, utils.IMG_SIZE],
+            interpolation='nearest',
+            batch_size=16,
+            shuffle=True,
+            validation_split=0.3,
+            subset='validation',
+            seed=123
         )
 
-        #images, labels = next(iter(image_data_loader))
+        return (ds_train,ds_val)
 
-        def mean_std(loader):
-            images, lebels = next(iter(loader))
-            # shape of images = [b,c,w,h]
-            mean, std = images.mean([0, 2, 3]), images.std([0, 2, 3])
-            return mean, std
+    def get_train_test_set_for_segmentation(self):
+        print("Load dataset for UNet")
+        image_directory = self.segmentation_path+'img/'
+        mask_directory = self.segmentation_path+'mask/'
 
-        mean, std = mean_std(image_data_loader)
-        print("mean and std: \n", mean, std)
+        size = utils.IMG_SIZE_UNET
+        image_dataset = []  # Many ways to handle data, you can use pandas. Here, we are using a list format.
+        mask_dataset = []  # Place holders to define add labels. We will add 0 to all parasitized images and 1 to uninfected.
+
+        images = os.listdir(image_directory)
+        for i, image_name in enumerate(images):  # Remember enumerate method adds a counter and returns the enumerate object
+            if (image_name.split('.')[1] == 'tiff'):
+                # print(image_directory+image_name)
+                image = cv2.imread(image_directory + image_name, 0)
+                image = Image.fromarray(image)
+                image = image.resize((size, size))
+                image_dataset.append(np.array(image))
+
+        masks = os.listdir(mask_directory)
+        for i, image_name in enumerate(masks):
+            if (image_name.split('.')[1] == 'tiff'):
+                image = cv2.imread(mask_directory + image_name, 0)
+                image = Image.fromarray(image)
+                image = image.resize((size, size))
+                mask_dataset.append(np.array(image))
+        print("Dataset loaded")
+        # Normalize images
+        image_dataset = np.expand_dims(normalize(np.array(image_dataset), axis=1), 3)
+        # D not normalize masks, just rescale to 0 to 1.
+        mask_dataset = np.expand_dims((np.array(mask_dataset)), 3) / 255.
+
+        X_train, X_test, y_train, y_test = train_test_split(image_dataset, mask_dataset, test_size=0.10, random_state=0)
+
+        return X_train, X_test, y_train, y_test
+        #return ((image_dataset.shape[1], image_dataset.shape[2], image_dataset.shape[3]),(X_train, X_test, y_train, y_test))
