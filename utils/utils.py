@@ -1,4 +1,9 @@
-IMG_SIZE = 224
-EPOCHS = 1
-LIMIT_IMAGES = 69445 #number of image to download, 69445 are all
+IMG_CHANNELS_UNET = 1
+IMG_SIZE_UNET = 256
+EPOCHS_UNET = 3
+LR_UNET = 0.001
+BS_UNET = 2
+IMG_SIZE_VGG = 224
+EPOCHS_VGG = 1
+LIMIT_IMAGES = 69445 #number of image to download, 69445 is the max
 
