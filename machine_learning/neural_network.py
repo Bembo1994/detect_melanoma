@@ -73,7 +73,7 @@ class UNet():
     def __init__(self):
         self.img_size = utils.IMG_SIZE_UNET
         self.img_channels = utils.IMG_CHANNELS_UNET
-        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__))+"/checkpoints/"
+        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__))+"/checkpoints/unet/"
         self.make_dirs(self.checkpoint_path)
         #self.model = self.get_unet_model(h, w, c)
 
@@ -83,9 +83,13 @@ class UNet():
             os.makedirs(path)
 
     def get_model(self, height, width, channels):
-
-        if os.path.isfile(self.checkpoint_path + "unet_model.hdf5"):
-            return load_model(self.checkpoint_path + "unet_model.hdf5")
+        name_model = self.checkpoint_path + 'unet_model_colab_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
+        name_logger = self.checkpoint_path + 'unet_training_logger_colab_{}i_{}e_{}bs_{}lr_{}.csv'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
+        print(name_model)
+        print(name_logger)
+        if os.path.isfile(name_model) :#and os.path.isfile(name_logger) :
+            print("UNet is already train")
+            return load_model(name_model)
 
         # Build the model
         inputs = Input((height, width, channels))
@@ -142,29 +146,35 @@ class UNet():
         c9 = Dropout(0.1)(c9)
         c9 = Conv2D(16, (3, 3), activation='relu', kernel_initializer='he_normal', padding='same')(c9)
 
-        outputs = Conv2D(1, (1, 1), activation='relu')(c9) #prova con relu -> sigmoid
+        outputs = Conv2D(1, (1, 1), activation=utils.FUNCTION_UNET)(c9) #prova con relu -> sigmoid
 
         model = Model(inputs=[inputs], outputs=[outputs])
         opt = Adam(learning_rate=utils.LR_UNET) # 0.001 default
         model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
         print(model.summary())
-
         return model
 
-    def train_and_get_history(self, model, X_train, X_test, y_train, y_test):
-        if os.path.isfile(self.checkpoint_path+'unet_training_logger.csv'):
-            return pd.read_csv(self.checkpoint_path+'unet_training_logger.csv')
+    def fit_model(self, model, X_train, X_val, y_train, y_val, csv_logger):
+        model.fit(X_train, y_train,
+                  batch_size=utils.BS_UNET,
+                  verbose=1,
+                  epochs=utils.EPOCHS_UNET,
+                  validation_data=(X_val, y_val),
+                  shuffle=False,
+                  callbacks=[csv_logger])
 
-        csv_logger = CSVLogger(self.checkpoint_path+'unet_training_logger.csv')
+    def train(self, model, X_train, X_val, y_train, y_val):
+        name_model = self.checkpoint_path + 'unet_model_colab_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, utils.LR_UNET.split(".")[1],utils.FUNCTION_UNET)
+        name_logger = self.checkpoint_path+'unet_training_logger_colab_{}i_{}e_{}bs_{}lr_{}.csv'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, utils.LR_UNET.split(".")[1], utils.FUNCTION_UNET)
+        if os.path.isfile(name_model) and os.path.isfile(name_logger) :
+            print("UNet is already train with this params")
+            return
 
-        history = model.fit(X_train, y_train,
-                                 batch_size=utils.BS_UNET,
-                                 verbose=1,
-                                 epochs=utils.EPOCHS_UNET,
-                                 validation_data=(X_test, y_test),
-                                 shuffle=False,
-                                 callbacks=[csv_logger])
-
-        model.save(self.checkpoint_path + "unet_model.hdf5")
-
-        return history
+        csv_logger = CSVLogger(name_logger)
+        if tensorflow.test.is_gpu_available():
+            with tf.device('/device:GPU:0'):
+                fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
+        else:
+            fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
+        model.save(name_model)
+        print("Model and csv logger are saved")

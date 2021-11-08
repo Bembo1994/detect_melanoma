@@ -9,6 +9,8 @@ import os, random
 import cv2
 import random
 import numpy as np
+import sys
+import argparse
 
 def main():
     '''
@@ -33,53 +35,72 @@ def main():
         plt.show()
 
     '''
+
     ds = dataset.Dataset()
 
-    #shapes, train_test = ds.get_train_test_set_for_segmentation()
-    train_test = ds.get_train_test_set_for_segmentation()
+    ds.download_metadata()
+    ds.download_dataset()
+    ds.download_mask()
 
-    X_train, X_test, y_train, y_test = train_test
+    ds.dataset_segmentation_to_pickle(0, utils.LIMIT_IMAGES_SEGMENTATION_PKL, False)
+    ds.dataset_segmentation_to_pickle(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.TEST_SET_SIZE, True)
 
-    #h, w, c = shapes
     unet = neural_network.UNet()
-
     unet_model = unet.get_model(utils.IMG_SIZE_UNET, utils.IMG_SIZE_UNET, utils.IMG_CHANNELS_UNET)
 
-    unet_history = unet.train_and_get_history(unet_model, X_train, X_test, y_train, y_test)
 
-    print(unet_history)
+    if eval(args.train_unet):
+        X_train, X_val, y_train, y_val = ds.get_train_and_val_set_for_segmentation()
+        unet.train(unet_model, X_train, X_val, y_train, y_val)
+        _, acc = unet_model.evaluate(X_val, y_val)
+        print("Accuracy = ", (acc * 100.0), "%")
+
+    if eval(args.test_unet):
+        _, X_test, _, y_test = ds.get_test_set_for_segmentation()
+        # evaluate model
+        _, acc = unet_model.evaluate(X_test, y_test)
+        print("TEST Accuracy = ", (acc * 100.0), "%")
+
+
+    '''
+    X_train, X_test, y_train, y_test = ds.get_train_val_set_for_segmentation(k)
+
+    unet_history = unet.train_and_get_history(unet_model, X_train, X_test, y_train, y_test, k)
 
     # evaluate model
     _, acc = unet_model.evaluate(X_test, y_test)
-    print("Accuracy = ", (acc * 100.0), "%")
-
+    print("Accuracy "+str(k)+"= ", (acc * 100.0), "%")
 
     # plot the training and validation accuracy and loss at each epoch
     loss = unet_history.history['loss']
     val_loss = unet_history.history['val_loss']
     epochs = range(1, len(loss) + 1)
-    plt.plot(epochs, loss, 'y', label='Training loss')
-    plt.plot(epochs, val_loss, 'r', label='Validation loss')
-    plt.title('Training and validation loss')
+    plt.plot(epochs, loss, 'y', label='Training loss'+str(k))
+    plt.plot(epochs, val_loss, 'r', label='Validation loss'+str(k))
+    plt.title('Training and validation loss'+str(k))
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig('Fig21.png')
+    plt.savefig('Fig_loss'+str(k)+'.png')
 
     acc = unet_history.history['accuracy']
     val_acc = unet_history.history['val_accuracy']
 
-    plt.plot(epochs, acc, 'y', label='Training acc')
-    plt.plot(epochs, val_acc, 'r', label='Validation acc')
-    plt.title('Training and validation accuracy')
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
+    plt.plot(epochs, acc, 'y', label='Training acc'+str(k))
+    plt.plot(epochs, val_acc, 'r', label='Validation acc'+str(k))
+    plt.title('Training and validation accuracy'+str(k))
+    plt.xlabel('Epochs'+str(k))
+    plt.ylabel('Accuracy'+str(k))
     plt.legend()
-    plt.savefig('Fig22.png')
+    plt.savefig('Fig_acc'+str(k)+'.png')
+
+
+    unet_model = load_model("machine_learning/checkpoints/unet_model6.hdf5")
+
 
     ##################################
     # IOU
-
+    X_train, X_test, y_train, y_test = ds.get_test_set_for_segmentation()
     y_pred = unet_model.predict(X_test)
     y_pred_thresholded = y_pred > 0.5
 
@@ -109,18 +130,14 @@ def main():
     #model = get_model()
     #unet_model.load_weights('mitochondria_test.hdf5')  # Trained for 50 epochs and then additional 100
     # model.load_weights('mitochondria_gpu_tf1.4.hdf5')  #Trained for 50 epochs
-    '''
 
-    '''
     test_img_number = random.randint(0, len(X_test))
     test_img = X_test[test_img_number]
     ground_truth = y_test[test_img_number]
     test_img_norm = test_img[:, :, 0][:, :, None]
     test_img_input = np.expand_dims(test_img_norm, 0)
     prediction = (unet_model.predict(test_img_input)[0, :, :, 0] > 0.2).astype(np.uint8)
-    '''
 
-    '''
     test_img_other = cv2.imread("dataset/ISICArchive/benign/" + random_test_img, 0)
     #cv2_imshow(test_img_other)
     test_img_other = cv2.resize(test_img_other, (256, 256), interpolation=cv2.INTER_CUBIC)
@@ -141,6 +158,10 @@ def main():
     plt.title('Prediction of external Image')
     plt.imshow(prediction_other, cmap='gray')
     plt.show()
-
+    '''
 if __name__== "__main__" :
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train_unet", help="train the unet ?")
+    parser.add_argument("--test_unet", help="test the unet ?")
+    args = parser.parse_args()
     main()
