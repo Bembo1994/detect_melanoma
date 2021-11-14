@@ -22,51 +22,95 @@ import pandas as pd
 class NN_VGG16():
 
     def __init__(self):
-        self.img_size = utils.IMG_SIZE
-        self.neural_network = VGG16(weights='imagenet', include_top=False, input_shape=(self.img_size, self.img_size, 3))
-        print(self.neural_network.summary())
+        self.img_size = utils.IMG_SIZE_VGG
+        #self.neural_network = VGG16(weights='imagenet', include_top=False, input_shape=(self.img_size, self.img_size, 3))
+        #print(self.neural_network.summary())
+        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/vgg16/"
+        self.make_dirs(self.checkpoint_path)
+        # self.model = self.get_unet_model(h, w, c)
 
-    def freeze_neural_network(self):
+    def make_dirs(self, path):
+        if not os.path.exists(path):
+            print("Make directory : {}".format(path))
+            os.makedirs(path)
+
+    def get_model(self):
+
+        name_model = self.checkpoint_path + 'vgg16_model_tesla_CV_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(
+            utils.LIMIT_IMAGES_CLASSIFICATION_PKL, utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
+            utils.FUNCTION_VGG)
+
+        name_logger = self.checkpoint_path + 'vgg16_training_logger_tesla_CV_{}i_{}e_{}bs_{}lr_{}.csv'.format(
+            utils.LIMIT_IMAGES_CLASSIFICATION_PKL, utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
+            utils.FUNCTION_VGG)
+
+        if os.path.isfile(name_model):  # and os.path.isfile(name_logger) :
+            print("VGG16 is already train")
+            return load_model(name_model)
+
+        old_vgg = VGG16(weights='imagenet', include_top=False, input_shape=(self.img_size, self.img_size, 3))
+
         # Freeze 0-14 the layers
-        for layer in self.neural_network.layers[:]:
+        for layer in old_vgg.layers[:]:
             layer.trainable = False
 
         # Check the trainable status of the individual layers
-        for layer in self.neural_network.layers:
+        for layer in old_vgg.layers:
             print(layer, layer.trainable)
 
-    def add_top_layers(self):
+        print(old_vgg.summary())
+
         # Create the model
-        new_model = keras.Sequential()
+        model = keras.Sequential()
 
         # Add the vgg convolutional base model
-        new_model.add(self.neural_network)
+        model.add(old_vgg)
 
         # Add new layers
-        new_model.add(Flatten())
-        new_model.add(Dense(4096, activation='softmax'))
-        new_model.add(Dense(4096, activation='softmax'))
-        new_model.add(Dense(1, activation='sigmoid'))
+        model.add(Flatten())
+        model.add(Dense(4096, activation='softmax'))
+        model.add(Dense(4096, activation='softmax'))
+        model.add(Dense(1, activation='sigmoid'))  # sigmoid or relu
 
         # Show a summary of the model. Check the number of trainable parameters
-        print(new_model.summary())
+        print(model.summary())
 
-        return new_model
+        opt = Adam(learning_rate=utils.LR_VGG)  # 0.001 default
+        model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
+        print(model.summary())
 
-    def compile(self, nn):
-        nn.compile(optimizer='adam',
-                          loss="binary_crossentropy",
-                          metrics=['accuracy'])
+        return model
 
-    def train(self,nn,ds_train,ds_val):
-        history = nn.fit(
-            ds_train,
-            validation_data=ds_val,
-            batch_size=16,
-            epochs=utils.EPOCHS,
-            verbose=1
-        )
-        return history
+    def fit_model(self, model, X_train, X_val, y_train, y_val, csv_logger):
+        model.fit(X_train, y_train,
+                  batch_size=utils.BS_VGG,
+                  verbose=1,
+                  epochs=utils.EPOCHS_VGG,
+                  validation_data=(X_val, y_val),
+                  shuffle=False,
+                  callbacks=[csv_logger])
+
+    def train(self, model, X_train, X_val, y_train, y_val):
+        name_model=self.checkpoint_path + 'vgg16_model_tesla_CV_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(
+            utils.LIMIT_IMAGES_CLASSIFICATION_PKL, utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
+            utils.FUNCTION_VGG)
+
+        name_logger = self.checkpoint_path + 'vgg16_training_logger_tesla_CV_{}i_{}e_{}bs_{}lr_{}.csv'.format(
+            utils.LIMIT_IMAGES_CLASSIFICATION_PKL, utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
+            utils.FUNCTION_VGG)
+
+        if os.path.isfile(name_model) and os.path.isfile(name_logger):
+            print("UNet is already train with this params")
+            return
+
+        csv_logger = CSVLogger(name_logger)
+        if tf.test.is_gpu_available():
+            with tf.device('/device:GPU:0'):
+                self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
+        else:
+            self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
+        model.save(name_model)
+        print("Model and csv logger are saved")
 
 class UNet():
 
@@ -85,8 +129,7 @@ class UNet():
     def get_model(self, height, width, channels):
         name_model = self.checkpoint_path + 'unet_model_colab_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
         name_logger = self.checkpoint_path + 'unet_training_logger_colab_{}i_{}e_{}bs_{}lr_{}.csv'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
-        print(name_model)
-        print(name_logger)
+
         if os.path.isfile(name_model) :#and os.path.isfile(name_logger) :
             print("UNet is already train")
             return load_model(name_model)
@@ -173,8 +216,8 @@ class UNet():
         csv_logger = CSVLogger(name_logger)
         if tensorflow.test.is_gpu_available():
             with tf.device('/device:GPU:0'):
-                fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
+                self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
         else:
-            fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
+            self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
         model.save(name_model)
         print("Model and csv logger are saved")

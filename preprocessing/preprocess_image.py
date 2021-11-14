@@ -24,31 +24,34 @@ class Preprocessor():
         boundRect = cv2.boundingRect(contour)
         x, y, w, h = boundRect
         f = origin_image_rgb[y:y + h, x:x + w]
-        k = cv2.resize(f, (224, 224), interpolation=cv2.INTER_CUBIC)
-        return k
+        k = cv2.resize(f, (utils.IMG_SIZE_VGG, utils.IMG_SIZE_VGG), interpolation=cv2.INTER_CUBIC)
+        return k/255.
 
     def unet_preprocessing(self, path, model):
         original = self.read_in_rgb(path)
-        original = cv2.resize(original, (256, 256), interpolation=cv2.INTER_CUBIC)
+        original = cv2.resize(original, (utils.IMG_SIZE_UNET, utils.IMG_SIZE_UNET), interpolation=cv2.INTER_CUBIC)
         img_to_gray = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
         img_norm = np.expand_dims(normalize(np.array(img_to_gray), axis=1), 2)
         img_norm = img_norm[:, :, 0][:, :, None]
         to_input = np.expand_dims(img_norm, 0)
         # Predict and threshold for values above 0.5 probability
         # Change the probability threshold to low value (e.g. 0.05) for watershed demo.
-        prediction_mask = (model.predict(to_input)[0, :, :, 0] > 0.2).astype(np.uint8)
+        prediction_mask = (model.predict(to_input)[0, :, :, 0] > 0.25).astype(np.uint8)
         return self.mole_detect(original, prediction_mask)
 
     def cv_preprocessing(self, path):
         original = self.read_in_rgb(path)
+
+        # remove noise and hair
         #dst = cv2.fastNlMeansDenoisingColored(original, None, 10, 10, 7, 21)
-        grayScale = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
-        kernel = cv2.getStructuringElement(1, (17, 17))
-        blackhat = cv2.morphologyEx(grayScale, cv2.MORPH_BLACKHAT, kernel)
-        _, threshold = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
-        final_image = cv2.inpaint(original, threshold, 1, cv2.INPAINT_TELEA)
+        #grayScale = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
+        #kernel = cv2.getStructuringElement(1, (17, 17))
+        #blackhat = cv2.morphologyEx(grayScale, cv2.MORPH_BLACKHAT, kernel)
+        #_, threshold = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
+        #final_image = cv2.inpaint(original, threshold, 1, cv2.INPAINT_TELEA)
+
         # Convert to HSV colourspace and extract just the Saturation
-        saturation = cv2.cvtColor(final_image, cv2.COLOR_RGB2HSV)[..., 1]
+        saturation = cv2.cvtColor(original, cv2.COLOR_RGB2HSV)[..., 1]
         # Find best (Otsu) threshold to divide black from white, and apply it
         ret, mask = cv2.threshold(saturation, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         return self.mole_detect(original, mask)
