@@ -2,9 +2,13 @@ from tensorflow.keras.utils import normalize
 import os
 import cv2
 import numpy as np
-
+from keras.models import load_model
+from utils import utils
 
 class Preprocessor():
+
+    def __init__(self):
+        self.unet = load_model("machine_learning/checkpoints/unet/unet_model_colab_3500i_30e_32bs_0005lr_relu.hdf5")
 
     def read_in_rgb(self,path):
         imm = cv2.imread(path)

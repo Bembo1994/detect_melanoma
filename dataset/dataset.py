@@ -1,10 +1,10 @@
 from dataset.API.isic_api import ISICApi
 from utils import utils
-from tensorflow.keras.preprocessing import image_dataset_from_directory
 from collections import defaultdict
 from sklearn.model_selection import train_test_split
 from PIL import Image
 from tensorflow.keras.utils import normalize
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from preprocessing import preprocess_image
 from keras.models import load_model
 from machine_learning import neural_network
@@ -16,6 +16,10 @@ import numpy as np
 import random
 import sys
 import pickle
+import shutil
+from sklearn.utils import shuffle
+from scipy import ndimage
+
 
 class Dataset():
 
@@ -24,17 +28,20 @@ class Dataset():
         self.real_path = os.path.dirname(os.path.realpath(__file__))
         self.savePath = self.real_path+"/ISICArchive/"
         self.segmentation_path = self.savePath + "Segmentation/"
+        self.classification_path = self.savePath + "Classification/"
         # Initialize the API; no login is necessary for public data
         self.api = ISICApi()
         self.make_dirs(self.savePath)
-        self.make_dirs(self.savePath + "benign/")
-        self.make_dirs(self.savePath + "malignant/")
         self.make_dirs(self.segmentation_path)
-        self.name_imgs_training_set_unet = defaultdict(list)
-        self.img_for_segmentation = set()
-        self.num_sample_for_segmentation = utils.LIMIT_IMAGES_SEGMENTATION_DOWNLOAD
+        self.make_dirs(self.classification_path)
         self.image_directory = self.segmentation_path + 'img/'
         self.mask_directory = self.segmentation_path + 'mask/'
+        self.make_dirs(self.mask_directory)
+        self.make_dirs(self.image_directory)
+        self.img_for_segmentation = set()
+        self.num_sample_for_segmentation = utils.LIMIT_IMAGES_SEGMENTATION_DOWNLOAD
+        self.preprocessor = preprocess_image.Preprocessor()
+        self.size_test_set = utils.SIZE_TEST_SET
 
     def make_dirs(self,path):
         if not os.path.exists(path):
@@ -57,30 +64,6 @@ class Dataset():
         else:
             print("File already saved : {}".format(self.savePath + "metadata.json"))
 
-    def download_dataset(self):
-        metadata = json.load(open(self.savePath+"metadata.json"))
-        print('Checking images')
-        if ((len(os.listdir(self.savePath+"benign/")) + len(os.listdir(self.savePath+"malignant/"))) < self.limit) :
-            for image in metadata:
-                # controllo delle chiavi nel dizionario
-                if "meta" in image and "clinical" in image["meta"] and "benign_malignant" in image["meta"]["clinical"]:
-                    path = ""
-                    # se benigno
-                    if image["meta"]["clinical"]["benign_malignant"] == "benign" and image["dataset"]["name"] != "SONIC":
-                        path = self.savePath+"benign/"
-                    # se maligno
-                    elif image["meta"]["clinical"]["benign_malignant"] == "malignant" and image["dataset"]["name"] != "SONIC":
-                        path = self.savePath+"malignant/"
-                    if path != "":
-                        if not os.path.isfile(path+image["name"]+".jpg"):
-                            imageFileOutputPath = os.path.join(path, '%s.jpg' % image['name'])
-                            imageFileResp = self.api.get('image/%s/download' % image['_id'])
-                            imageFileResp.raise_for_status()
-                            with open(imageFileOutputPath, 'wb') as imageFileOutputStream:
-                                for chunk in imageFileResp:
-                                    imageFileOutputStream.write(chunk)
-            print("Downloaded dataset")
-
         if not os.path.isfile(self.savePath+'dataframe.csv'):
             print("Creating csv file")
             with open(self.savePath+"metadata.json") as f:
@@ -92,7 +75,7 @@ class Dataset():
                     data_normalize.rename(columns={c: column + "." + c}, inplace=True)
                 df.drop(column, axis=1, inplace=True)
                 df = pd.concat([df, data_normalize], axis=1, join="inner")
-
+            #69445 rows (images) x 36 columns
             df.to_csv(self.savePath+'dataframe.csv',index=False)
 
         if not os.path.isfile(self.savePath+'dataframe_cleaned.csv') :
@@ -112,39 +95,61 @@ class Dataset():
             df = df.drop(["other", "scar", "seborrheic keratosis", "solar lentigo", "squamous cell carcinoma"])
             # 33468 rows -> images
             df = df.reset_index()
+            df = df.set_index("dataset.name")
+            df = df.drop(["SONIC"])     #the images of this class are full of artifacts
+            df.reset_index()
+            # 24217 rows (images) x 35 columns
             df.to_csv(self.savePath+'dataframe_cleaned.csv',index=False)
 
+    def download_dataset(self):
+
+        if os.path.isfile(self.savePath+'dataframe_cleaned.csv'):
+            df = pd.read_csv(self.savePath+'dataframe_cleaned.csv')
+        else:
+            sys.exit("ERROR : Dataframe is not saved")
+
+        print('Checking images')
+        for i, name in enumerate(df["name"]):
+            name_ext = str(name)+".jpg"
+            id = df.iloc[i]["_id"]
+            b_or_m = df.iloc[i]["meta.clinical.benign_malignant"]
+            path = self.classification_path + b_or_m + "/"
+            if len(os.listdir(path)) <= utils.NUMBER_IMG_FOR_CLASS :
+                imageFileOutputPath = os.path.join(path, name_ext)
+                if not (os.path.isfile((imageFileOutputPath))):
+                    imageFileResp = self.api.get('image/%s/download' % id)
+                    imageFileResp.raise_for_status()
+                    with open(imageFileOutputPath, 'wb') as imageFileOutputStream:
+                        for chunk in imageFileResp:
+                            imageFileOutputStream.write(chunk)
+        print("Downloaded dataset")
+
     def download_mask(self):
-        if not os.path.isfile(self.savePath+'dataframe.csv'):
+        if not (os.path.isfile(self.savePath+'dataframe.csv') or os.path.isfile(self.savePath+'dataframe_cleaned.csv')):
             sys.exit("ERROR : Before download the dataset")
-        df = pd.read_csv(self.savePath+'dataframe.csv')
-        print("Check {} images for segmentation".format(self.num_sample_for_segmentation))
 
-        #scorro il dataframe e trovo 5K immagini (limit images segmentation download) da scaricare dalle ~16K con campo bening or malignant nullo
+        df1 = pd.read_csv(self.savePath+'dataframe.csv')
+        df2 = pd.read_csv(self.savePath + 'dataframe_cleaned.csv')
+        df1.set_index('_id', inplace=True)
+        df2.set_index('_id', inplace=True)
+        df = df1.drop(df2.index) #get only images not used for classification
+
+        print("{} possible images to download, but only {} images are downloading for segmentation".format(len(df), self.num_sample_for_segmentation))
+        #get images of dataset named "SONIC" because force the network to not overfitting
         for i, name in enumerate(df["dataset.name"]):
-            if name == "SONIC":
+            if name == "SONIC" and len(self.img_for_segmentation)<self.num_sample_for_segmentation:
                 self.img_for_segmentation.add(df["_id"][i])
 
-        for i, name in enumerate(df["meta.clinical.benign_malignant"]):
-            if name != "benign" and name != "malignant":
-                self.img_for_segmentation.add(df["_id"][i])
-
-        self.make_dirs(self.segmentation_path+"mask/")
-        self.make_dirs(self.segmentation_path + "img/")
-
-        #se non sono state scaricate tutte le immagini allora continua a scaricarle
-        if len(os.listdir(self.segmentation_path + "mask/")) < self.num_sample_for_segmentation and len(os.listdir(self.segmentation_path + "mask/")) == len(os.listdir(self.segmentation_path + "img/")):
-
+        #check if need to download more images
+        if len(os.listdir(self.mask_directory)) < self.num_sample_for_segmentation and len(os.listdir(self.mask_directory)) == len(os.listdir(self.image_directory)):
             for i, img_id in enumerate(self.img_for_segmentation) :
                 name = df.iloc[list(df["_id"]).index(img_id)]["name"]
-                print(name)
                 flag = False
-                if not os.path.isfile(self.segmentation_path+"mask/%s.tiff" % name) and not os.path.isfile(self.segmentation_path+"img/%s.tiff" % name):
+                if not os.path.isfile(self.mask_directory+"%s.tiff" % name) and not os.path.isfile(self.image_directory+"%s.tiff" % name):
                     flag = True
-
                 if flag :
                     segmentation = self.api.getJson('segmentation?imageId=' + img_id)
-                    if len(segmentation)>0:
+                    if len(segmentation)>0: #check if image mask exists
                         imageFileResp_img = self.api.get('image/%s/download' % img_id)
 
                         imageFileResp_seg = self.api.get('segmentation/%s/mask' % segmentation[0]['_id'])
@@ -164,201 +169,95 @@ class Dataset():
 
             print("Downloaded image for segmentation")
 
-    # if flag is true then is for train and validation else is for test
-    def dataset_segmentation_to_pickle(self, start, end, flag):
-
-        if flag:
-            test_size = 1
-            name_file = 'Dataset_Test_Segmentation_Dict_' + str(end) + '.pkl'
+    def data_augmentation(self):
+        if len(os.listdir(self.classification_path+'benign/')) > len(os.listdir(self.classification_path+'malignant/')):
+            imgs_to_aug = os.listdir(self.classification_path+'malignant/')
+            for i in imgs_to_aug:
+                image = cv2.imread(self.classification_path+'malignant/' + i)
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                rotated = ndimage.rotate(image, 180)
+                # Filename
+                filename = self.classification_path+'malignant/' + str(i.split(".")[0]) + "_aug180." + str(i.split(".")[1])
+                cv2.imwrite(filename, rotated)
         else:
-            test_size = 0.1
-            name_file = 'Dataset_Segmentation_Dict_Colab_' + str(end) + '.pkl'
+            print("Data augmentation already made")
 
-        if os.path.isfile(self.segmentation_path + name_file):
-            print("File pickle is already written")
-            return
+    def get_dataset_segmentation(self, is_for_test_set):
 
-        print("Creating pickle dataset for UNet")
+        dataset = []
+        label = []
 
-        size = utils.IMG_SIZE_UNET
         images = os.listdir(self.image_directory)
         masks = os.listdir(self.mask_directory)
+        size = utils.IMG_SIZE_UNET
 
-        image_dataset = []
-        mask_dataset = []
-        for image_name in images[start:start + end]:
+        if is_for_test_set :
+            images = images[-self.size_test_set:]
+            masks = masks[-self.size_test_set:]
+        else :
+            images = images[:-self.size_test_set]
+            masks = masks[:-self.size_test_set]
+
+        for image_name in images:
             image = cv2.imread(self.image_directory + image_name, 0)
             image = Image.fromarray(image)
             image = image.resize((size, size))
-            image_dataset.append(np.array(image))
+            dataset.append(np.array(image))
 
-        for image_name in masks[start:start + end]:
+        for image_name in masks:
             image = cv2.imread(self.mask_directory + image_name, 0)
             image = Image.fromarray(image)
             image = image.resize((size, size))
-            mask_dataset.append(np.array(image))
+            label.append(np.array(image))
 
-        print("Dataset loaded")
+        dataset, label = shuffle(dataset, label, random_state=71)
+        dataset = np.array(dataset)
+        label = np.array(label)
         # Normalize images
-        image_dataset = np.expand_dims(normalize(np.array(image_dataset), axis=1), 3)
+        dataset = np.expand_dims(normalize(np.array(dataset), axis=1), 3)
         # D not normalize masks, just rescale to 0 to 1.
-        mask_dataset = np.expand_dims((np.array(mask_dataset)), 3) / 255.
+        label = np.expand_dims((np.array(label)), 3) / 255.
 
-        X_train, X_test, y_train, y_test = train_test_split(image_dataset, mask_dataset, test_size=test_size,
-                                                            random_state=0)
+        X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size=0.1, random_state=123)
 
-        print("Writing pickle")
-
-        dataset_dict = {"X_train": X_train, "X_test": X_test, "y_train": y_train, "y_test": y_test}
-        with open(self.segmentation_path + name_file, 'wb') as f:
-            pickle.dump(dataset_dict, f)
-
-        print("Write")
-
-    def get_dataset(self, path):
-        with open(path, "rb") as f:
-            tmp = pickle.load(f)
-        X_train = tmp["X_train"]
-        X_test = tmp["X_test"]
-        y_train = tmp["y_train"]
-        y_test = tmp["y_test"]
         return X_train, X_test, y_train, y_test
 
-    def get_test_set_for_segmentation(self):
-        return self.get_dataset(self.segmentation_path + 'Dataset_Test_Segmentation_Dict_' + str(utils.TEST_SET_SIZE_SEGMENTATION) + '.pkl')
+    def get_dataset_classification(self, cv_or_unet_preprocessing, is_for_test_set):
 
-    def get_train_and_val_set_for_segmentation(self):
-        return self.get_dataset(self.segmentation_path + 'Dataset_Segmentation_Dict_Colab_' + str(utils.LIMIT_IMAGES_SEGMENTATION_PKL) + '.pkl')
+        dataset = []
+        label = []
 
-    #flag is for cv_preprocessing
-    def classification_pickle(self, flag, names_benign, names_malignant, unet_model, preprocessor, test_size):
+        benigns = os.listdir(self.classification_path + "benign/")
+        malignants = os.listdir(self.classification_path + "malignant/")
 
-        for count in range(4) :
+        if is_for_test_set :
+            benigns = benigns[-self.size_test_set:]
+            malignants = malignants[-self.size_test_set:]
+        else :
+            benigns = benigns[:-self.size_test_set]
+            malignants = malignants[:-self.size_test_set]
 
-            start = count * 1000
-            end = (count + 1) * 1000
+        for image_name in benigns:
+            if cv_or_unet_preprocessing == "cv":
+                result = self.preprocessor.cv_preprocessing(self.classification_path + "benign/" + image_name)
+            else :
+                result = self.preprocessor.unet_preprocessing(self.classification_path + "benign/" + image_name)
+            dataset.append(np.array(result))
+            label.append(0)
 
-            if flag and test_size<1:
-                name_file = "dataset_dict_classification_(CV)_{}i_10%.pkl".format(end)
-            if flag and test_size==1:
-                name_file = "dataset_test_dict_classification_(CV)_{}i_10%.pkl".format(end)
-            if not flag and test_size < 1:
-                name_file = "dataset_dict_classification_(UNET_{}i_{}e_{}bs_{}lr_{})_{}i_10%.pkl".format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET, end)
-            if not flag and test_size == 1:
-                name_file = "dataset_test_dict_classification_(UNET_{}i_{}e_{}bs_{}lr_{})_{}i_10%.pkl".format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET, end)
+        for image_name in malignants:
+            if cv_or_unet_preprocessing == "cv":
+                result = self.preprocessor.cv_preprocessing(self.classification_path + "malignant/" + image_name)
+            else :
+                result = self.preprocessor.unet_preprocessing(self.classification_path + "malignant/" + image_name)
+            dataset.append(np.array(result))
+            label.append(1)
 
-            if not os.path.isfile(self.savePath + name_file):
-                dataset = []
-                label = []
+        dataset, label = shuffle(dataset, label, random_state=71)
+        dataset = np.array(dataset)
+        label = np.array(label)
 
-                j = 0
 
-                for image_name in names_benign[start:end]:
-                    if j % 1000 == 0:
-                        print(j)
-                    path_img = self.savePath + "benign/" + image_name + ".jpg"
-                    if os.path.isfile(path_img):
-                        try: # try segmentation else get the total image and resize
-                            if flag:
-                                _, _, result = preprocessor.cv_preprocessing(path_img, 0)
-                            else :
-                                _, _, result = preprocessor.unet_preprocessing(path_img, unet_model, 0)
-                            dataset.append(np.array(result))
-                            label.append(0)
-                            j += 1
-                        except:
-                            img = preprocessor.read_in_rgb(path_img)
-                            img = cv2.resize(img, (utils.IMG_SIZE_VGG, utils.IMG_SIZE_VGG), interpolation=cv2.INTER_CUBIC)
-                            dataset.append(np.array(img))
-                            label.append(0)
-                            j += 1
-                            if flag:
-                                print("Error in cv_preprocessing with image (malignant) : {}".format(image_name))
-                            else :
-                                print("Error in unet_preprocessing with image (malignant) : {}".format(image_name))
-                j = 0
-                for image_name in names_malignant[start:end]:
-                    if j % 1000 == 0:
-                        print(j)
-                    path_img = self.savePath + 'malignant/' + image_name + ".jpg"
-                    if os.path.isfile(path_img):
-                        try: # try segmentation else get the total image and resize
-                            if flag:
-                                _, _, result = preprocessor.cv_preprocessing(path_img, 0)
-                            else :
-                                _, _, result = preprocessor.unet_preprocessing(path_img, unet_model, 0)
-                            dataset.append(np.array(cv_result))
-                            label.append(1)
-                            j += 1
-                        except:
-                            img = preprocessor.read_in_rgb(path_img)
-                            img = cv2.resize(img, (224, 224), interpolation=cv2.INTER_CUBIC)
-                            dataset.append(np.array(img))
-                            label.append(1)
-                            j += 1
-                            if flag:
-                                print("Error in cv_preprocessing with image (malignant) : {}".format(image_name))
-                            else :
-                                print("Error in unet_preprocessing with image (malignant) : {}".format(image_name))
+        X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size=0.1, random_state=123)
 
-                dataset = np.array(dataset)
-                label = np.array(label)
-
-                X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size=test_size, random_state=0)
-                print("Writing pickle")
-
-                dataset_dict = {"X_train": X_train, "X_test": X_test, "y_train": y_train, "y_test": y_test}
-
-                with open(self.savePath + name_file, 'wb') as f:
-                    pickle.dump(dataset_dict, f)
-
-                print("Write")
-
-    def dataset_classification_to_pickle(self, flag):
-        preprocessor = preprocess_image.Preprocessor()
-        unet = neural_network.UNet()
-        unet_model = unet.get_model(utils.IMG_SIZE_UNET, utils.IMG_SIZE_UNET, utils.IMG_CHANNELS_UNET)
-        df = pd.read_csv(self.savePath+'dataframe_cleaned.csv')
-
-        names_benign = []
-        names_malignant = []
-        for i, b_or_m in enumerate(df["meta.clinical.benign_malignant"]):
-            if b_or_m == "benign":
-                names_benign.append(df.iloc[i]["name"])
-            elif b_or_m == "malignant":
-                names_malignant.append(df.iloc[i]["name"])
-
-        if not flag: #if false then make the training and validation set
-
-            self.classification_pickle(flag=True, names_benign=names_benign, names_malignant=names_malignant, unet_model=None, preprocessor=preprocessor, test_size=0.10)
-            self.classification_pickle(flag=False, names_benign=names_benign, names_malignant=names_malignant, unet_model=unet_model, preprocessor=preprocessor, test_size=0.10)
-
-        else : #else test set
-
-            self.classification_pickle(flag=True, names_benign=names_benign, names_malignant=names_malignant, unet_model=None, preprocessor=preprocessor, test_size=1)
-            self.classification_pickle(flag=False, names_benign=names_benign, names_malignant=names_malignant, unet_model=unet_model, preprocessor=preprocessor, test_size=1)
-
-    #flag is for cv
-    def get_train_and_val_set_for_classification(self, flag_unet, flag_test):
-        X_train1, X_test1, y_train1, y_test1 = self.get_dataset( self.savePath + "/Classification/dict_train_val_classification_CV_0-1500i_20%.pkl")
-        X_train2, X_test2, y_train2, y_test2 = self.get_dataset( self.savePath + "/Classification/dict_train_val_classification_CV_1500-3000i_20%.pkl")
-        X_train = np.concatenate((X_train1, X_train2))
-        X_test = np.concatenate((X_test1, X_test2))
-        y_train = np.concatenate((y_train1, y_train2))
-        y_test = np.concatenate((y_test1, y_test2))
         return X_train, X_test, y_train, y_test
-        '''
-        if flag_unet and flag_test:
-            return self.get_dataset(self.savePath + "dataset_test_dict_segmentation_(CV)_{}i_10%.pkl".format(utils.LIMIT_IMAGES_CLASSIFICATION_PKL))
-        if flag_unet and not flag_test:
-            return self.get_dataset(self.savePath + "dataset_dict_segmentation_(CV)_{}i_10%.pkl".format(utils.LIMIT_IMAGES_CLASSIFICATION_PKL))
-        if not flag_unet and flag_test:
-            return self.get_dataset(self.savePath + "dataset_test_dict_segmentation_(UNET_{}i_{}e_{}bs_{}lr_{})_{}i_10%.pkl".format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET, utils.LIMIT_IMAGES_CLASSIFICATION_PKL))
-        if not flag_unet and not flag_test:
-            return self.get_dataset(self.savePath + "dataset_dict_segmentation_(UNET_{}i_{}e_{}bs_{}lr_{})_{}i_10%.pkl".format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET, utils.LIMIT_IMAGES_CLASSIFICATION_PKL))
-        '''
-
-
-
-
-
