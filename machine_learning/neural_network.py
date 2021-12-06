@@ -1,16 +1,17 @@
-from keras.models import Model
+from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.applications.resnet50 import ResNet50
 from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
-from keras.preprocessing.image import ImageDataGenerator
-from keras.callbacks import ModelCheckpoint, EarlyStopping
-from keras.layers import Dense, Dropout, Flatten
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras.layers import Dense, Dropout, Flatten
 from pathlib import Path
 from tensorflow.keras.preprocessing import image_dataset_from_directory
 from tensorflow.keras import layers
 from tensorflow import keras
-from keras.layers import Input, Conv2D, MaxPooling2D, GlobalMaxPooling2D, UpSampling2D, concatenate, Conv2DTranspose, BatchNormalization, Dropout, Lambda
-from keras.models import load_model
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, GlobalMaxPooling2D, UpSampling2D, concatenate, Conv2DTranspose, BatchNormalization, Dropout, Lambda
+from tensorflow.keras.models import load_model
 from tensorflow.keras.callbacks import CSVLogger
 import os
 import tensorflow as tf
@@ -18,212 +19,75 @@ import numpy as np
 from utils import utils
 import pandas as pd
 
-class NN_ResNet50():
+class NeuralNetworks():
 
-    def __init__(self):
-        self.img_size = utils.IMG_SIZE_RESNET
-        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/resnet50/"
-        self.make_dirs(self.checkpoint_path)
+    def __init__(self, is_unet, is_vgg, is_resnet, cv_or_unet_preprocessing):
 
-    def make_dirs(self, path):
-        if not os.path.exists(path):
-            print("Make directory : {}".format(path))
-            os.makedirs(path)
+        self.cv_or_unet_preprocessing = cv_or_unet_preprocessing
 
-    def get_model(self, cv_or_unet_preprocessing):
+        if is_unet:
+            self.img_size = utils.IMG_SIZE_UNET
+            self.img_channels = utils.IMG_CHANNELS_UNET
+            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/unet/"
+            self.make_dirs(self.checkpoint_path)
+            self.epochs = utils.EPOCHS_UNET
+            self.batch_size = utils.BS_UNET
+            self.learning_rate = utils.LR_UNET
+            self.activation_function = utils.FUNCTION_UNET
+            self.head_name = "unet"
+        if is_vgg:
+            self.img_size = utils.IMG_SIZE_VGG
+            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/vgg16/"
+            self.make_dirs(self.checkpoint_path)
+            self.epochs = utils.EPOCHS_VGG
+            self.batch_size = utils.BS_VGG
+            self.learning_rate = utils.LR_VGG
+            self.activation_function = utils.FUNCTION_VGG
+            self.head_name = "vgg"
+        if is_resnet:
+            self.img_size = utils.IMG_SIZE_RESNET
+            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/resnet50/"
+            self.make_dirs(self.checkpoint_path)
+            self.epochs = utils.EPOCHS_RESNET
+            self.batch_size = utils.BS_RESNET
+            self.learning_rate = utils.LR_RESNET
+            self.activation_function = utils.FUNCTION_RESNET
+            self.head_name = "resnet"
+        if is_bembonet:
+            self.img_size = utils.IMG_SIZE_BEMBONET
+            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/resnet50/"
+            self.make_dirs(self.checkpoint_path)
+            self.epochs = utils.EPOCHS_BEMBONET
+            self.batch_size = utils.BS_BEMBONET
+            self.learning_rate = utils.LR_BEMBONET
+            self.activation_function = utils.FUNCTION_BEMBONET
+            self.head_name = "bembonet"
 
-        name_model = self.checkpoint_path + 'resnet_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_RESNET, utils.BS_RESNET, str(utils.LR_RESNET).split(".")[1],
-            utils.FUNCTION_RESNET)
+        app_name_model = '{}_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(self.head_name, self.cv_or_unet_preprocessing, self.epochs,
+                                                                       self.batch_size,
+                                                                       str(self.learning_rate).split(".")[1],
+                                                                       self.activation_function)
+        app_name_logger = '{}_training_logger_{}_{}e_{}bs_{}lr_{}.csv'.format(self.head_name, self.cv_or_unet_preprocessing, self.epochs,
+                                                                       self.batch_size,
+                                                                       str(self.learning_rate).split(".")[1],
+                                                                       self.activation_function)
 
-        name_logger = self.checkpoint_path + 'resnet_training_logger_{}_{}e_{}bs_{}lr_{}.csv'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_RESNET, utils.BS_RESNET, str(utils.LR_RESNET).split(".")[1],
-            utils.FUNCTION_RESNET)
-
-        if os.path.isfile(name_model) and os.path.isfile(name_logger) :
-            print("ResNet50 is already train")
-            return load_model(name_model)
-
-        base_model = ResNet50(weights='imagenet', include_top=False)
-
-        for layer in base_model.layers:
-            layer.trainable = False
-
-        x = base_model.output
-        x = GlobalMaxPooling2D()(x)
-        x = Dense(1024, activation='relu')(x)
-        x = Dense(1024, activation='relu')(x)
-        x = Dense(512, activation='relu')(x)
-        x = Dense(1, activation=utils.FUNCTION_RESNET)(x)
-        model = Model(inputs=base_model.input, outputs=x)
-        print(model.summary())
-        adam = Adam(lr=utils.LR_RESNET)
-        model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
-
-        return model
-
-    def fit_model(self, model, X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback):
-        model.fit(X_train,y_train,
-                  batch_size=utils.BS_RESNET,
-                  verbose=1,
-                  epochs=utils.EPOCHS_RESNET,
-                  validation_data=(X_val, y_val),
-                  shuffle=True,
-                  callbacks=[csv_logger, model_checkpoint_callback])
-
-    def train(self, model, X_train, X_val, y_train, y_val, cv_or_unet_preprocessing):
-        name_model = self.checkpoint_path + 'resnet_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_RESNET, utils.BS_RESNET, str(utils.LR_RESNET).split(".")[1],
-            utils.FUNCTION_RESNET)
-
-        name_logger = self.checkpoint_path + 'resnet_training_logger_{}_{}e_{}bs_{}lr_{}.csv'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_RESNET, utils.BS_RESNET, str(utils.LR_RESNET).split(".")[1],
-            utils.FUNCTION_RESNET)
-
-        if os.path.isfile(name_model) and os.path.isfile(name_logger):
-            print("ResNet50 is already train with this params")
-            return
-
-        csv_logger = CSVLogger(name_logger)
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=self.checkpoint_path,
-            save_weights_only=True,
-            monitor='val_accuracy',
-            mode='max',
-            save_best_only=True)
-
-        if tf.test.is_gpu_available():
-            with tf.device('/device:GPU:0'):
-                print("Work with GPU")
-                self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
-        else:
-            print("Work with CPU")
-            self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
-        model.save(name_model)
-        print("Model and csv logger are saved")
-
-class NN_VGG16():
-
-    def __init__(self):
-        self.img_size = utils.IMG_SIZE_VGG
-        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/vgg16/"
-        self.make_dirs(self.checkpoint_path)
-
+        self.name_model = self.checkpoint_path + app_name_model
+        self.name_logger = self.checkpoint_path + app_name_logger
 
     def make_dirs(self, path):
         if not os.path.exists(path):
             print("Make directory : {}".format(path))
             os.makedirs(path)
 
-    def get_model(self, cv_or_unet_preprocessing):
+    def get_unet_model(self):
 
-        name_model = self.checkpoint_path + 'vgg16_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
-            utils.FUNCTION_VGG)
-
-        name_logger = self.checkpoint_path + 'vgg16_training_logger_{}_{}e_{}bs_{}lr_{}.csv'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
-            utils.FUNCTION_VGG)
-
-        if os.path.isfile(name_model) and os.path.isfile(name_logger) :
-            print("NET is already train")
-            return load_model(name_model)
-
-        old_vgg = VGG16(weights='imagenet', include_top=False, input_shape=(self.img_size, self.img_size, 3))
-
-        # Freeze 0-14 the layers
-        for layer in old_vgg.layers[:]:
-            layer.trainable = False
-
-        # Check the trainable status of the individual layers
-        for layer in old_vgg.layers:
-            print(layer, layer.trainable)
-
-        print(old_vgg.summary())
-
-        # Create the model
-        model = keras.Sequential()
-
-        # Add the vgg convolutional base model
-        model.add(old_vgg)
-
-        # Add new layers
-        model.add(Flatten())
-        model.add(Dense(4096, activation='softmax'))
-        model.add(Dense(4096, activation='softmax'))
-        model.add(Dense(1, activation='sigmoid'))  # sigmoid or relu
-
-        # Show a summary of the model. Check the number of trainable parameters
-        print(model.summary())
-
-        opt = Adam(learning_rate=utils.LR_VGG)  # 0.001 default
-        model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
-        print(model.summary())
-
-        return model
-
-    def fit_model(self, model, X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback):
-        model.fit(X_train,y_train,
-                  batch_size=utils.BS_VGG,
-                  verbose=1,
-                  epochs=utils.EPOCHS_VGG,
-                  validation_data=(X_val, y_val),
-                  shuffle=True,
-                  callbacks=[csv_logger, model_checkpoint_callback])
-
-    def train(self, model, X_train, X_val, y_train, y_val, cv_or_unet_preprocessing):
-        name_model = self.checkpoint_path + 'vgg16_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
-            utils.FUNCTION_VGG)
-
-        name_logger = self.checkpoint_path + 'vgg16_training_logger_{}_{}e_{}bs_{}lr_{}.csv'.format(cv_or_unet_preprocessing,
-            utils.EPOCHS_VGG, utils.BS_VGG, str(utils.LR_VGG).split(".")[1],
-            utils.FUNCTION_VGG)
-
-        if os.path.isfile(name_model) and os.path.isfile(name_logger):
-            print("VGG is already train with this params")
-            return
-
-        csv_logger = CSVLogger(name_logger)
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=self.checkpoint_path,
-            save_weights_only=True,
-            monitor='val_accuracy',
-            mode='max',
-            save_best_only=True)
-
-        if tf.test.is_gpu_available():
-            with tf.device('/device:GPU:0'):
-                self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
-        else:
-            self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
-        model.save(name_model)
-        print("Model and csv logger are saved")
-
-class UNet():
-
-    def __init__(self):
-        self.img_size = utils.IMG_SIZE_UNET
-        self.img_channels = utils.IMG_CHANNELS_UNET
-        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__))+"/checkpoints/unet/"
-        self.make_dirs(self.checkpoint_path)
-        #self.model = self.get_unet_model(h, w, c)
-
-    def make_dirs(self,path):
-        if not os.path.exists(path):
-            print("Make directory : {}".format(path))
-            os.makedirs(path)
-
-    def get_model(self, height, width, channels):
-        name_model = self.checkpoint_path + 'unet_model_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
-        name_logger = self.checkpoint_path + 'unet_training_logger_{}i_{}e_{}bs_{}lr_{}.csv'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
-
-        if os.path.isfile(name_model) and os.path.isfile(name_logger) :
+        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
             print("UNet is already train")
-            return load_model(name_model)
+            return load_model(self.name_model)
 
         # Build the model
-        inputs = Input((height, width, channels))
+        inputs = Input((self.img_size, self.img_size, self.img_channels))
         # s = Lambda(lambda x: x / 255)(inputs)   #No need for this if we normalize our inputs beforehand
         s = inputs
 
@@ -280,100 +144,186 @@ class UNet():
         outputs = Conv2D(1, (1, 1), activation=utils.FUNCTION_UNET)(c9) #prova con relu -> sigmoid
 
         model = Model(inputs=[inputs], outputs=[outputs])
-        opt = Adam(learning_rate=utils.LR_UNET) # 0.001 default
+        opt = Adam(learning_rate=self.learning_rate) # 0.001 default
         model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
         print(model.summary())
         return model
 
-    def fit_model(self, model, X_train, X_val, y_train, y_val, csv_logger):
-        model.fit(X_train, y_train,
-                  batch_size=utils.BS_UNET,
-                  verbose=1,
-                  epochs=utils.EPOCHS_UNET,
-                  validation_data=(X_val, y_val),
-                  shuffle=True,
-                  callbacks=[csv_logger])
+    def get_vgg_model(self):
 
-    def train(self, model, X_train, X_val, y_train, y_val):
-        name_model = self.checkpoint_path + 'unet_model_{}i_{}e_{}bs_{}lr_{}.hdf5'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
-        name_logger = self.checkpoint_path + 'unet_training_logger_{}i_{}e_{}bs_{}lr_{}.csv'.format(utils.LIMIT_IMAGES_SEGMENTATION_PKL, utils.EPOCHS_UNET, utils.BS_UNET, str(utils.LR_UNET).split(".")[1], utils.FUNCTION_UNET)
+        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
+            print("VGG16 is already train")
+            return load_model(self.name_model)
 
-        if os.path.isfile(name_model) and os.path.isfile(name_logger) :
-            print("UNet is already train with this params")
-            return
+        old_vgg = VGG16(weights='imagenet', include_top=False, input_shape=(self.img_size, self.img_size, 3))
 
-        csv_logger = CSVLogger(name_logger)
-        if tensorflow.test.is_gpu_available():
-            with tf.device('/device:GPU:0'):
-                self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
-        else:
-            self.fit_model(model, X_train, X_val, y_train, y_val, csv_logger)
-        model.save(name_model)
-        print("UNet model and history are saved")
+        # Freeze 0-14 the layers
+        for layer in old_vgg.layers[:]:
+            layer.trainable = False
 
-class BemboNET():
+        # Check the trainable status of the individual layers
+        for layer in old_vgg.layers:
+            print(layer, layer.trainable)
 
-    def get_model(self):
-        model = tf.keras.Sequential([
-            # resize_and_rescale,
-            # data_augmentation,
+        print(old_vgg.summary())
 
-            layers.Conv2D(32, 3, strides=3, padding='same', input_shape=(224, 224, 3)),
-            layers.LeakyReLU(alpha=0.3),
-            layers.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
+        # Create the model
+        model = keras.Sequential()
 
-            layers.Dense(256, activation=layers.LeakyReLU(alpha=0.3)),
-            layers.Conv2D(60, 3, strides=3, padding='same'),
-            layers.LeakyReLU(alpha=0.3),
-            layers.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-            layers.Dropout(0.3),
-            layers.BatchNormalization(),
+        # Add the vgg convolutional base model
+        model.add(old_vgg)
 
-            layers.Conv2D(60, 2, strides=2, padding='same'),
-            layers.LeakyReLU(alpha=0.3),
-            layers.MaxPooling2D(pool_size=2, strides=2, padding='same'),
-            layers.Dropout(0.2),
-            layers.BatchNormalization(),
+        # Add new layers
+        model.add(Flatten())
+        model.add(Dense(256, activation='relu'))
+        model.add(Dropout(0.5))
+        #model.add(Dense(4096, activation='softmax'))
+        model.add(Dense(1, activation='sigmoid'))  # sigmoid or relu
 
-            layers.Dense(1024),
-            layers.LeakyReLU(alpha=0.3),
-            layers.Conv2D(90, 3, strides=1, padding='same'),
-            layers.LeakyReLU(alpha=0.3),
-            layers.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-            layers.Dropout(0.3),
-            layers.BatchNormalization(),
+        # Show a summary of the model. Check the number of trainable parameters
+        print(model.summary())
 
-            layers.Conv2D(178, 3, strides=3, padding='same'),
-            layers.LeakyReLU(alpha=0.3),
-            layers.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-            layers.Dropout(0.3),
-            layers.BatchNormalization(),
+        opt = Adam(learning_rate=self.learning_rate)  # 0.001 default
+        model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
+        print(model.summary())
 
-            layers.Dense(1024),
-            layers.LeakyReLU(alpha=0.3),
-            layers.Conv2D(60, 2, strides=2, padding='same', activation='relu'),
-            layers.MaxPooling2D(pool_size=2, strides=2, padding='same'),
-            layers.Dropout(0.5),
-            layers.BatchNormalization(),
+        return model
 
-            layers.Dense(512, activation='sigmoid'),
-            layers.Conv2D(90, 3, strides=3, padding='same', activation='sigmoid'),
-            # layers.MaxPooling2D(pool_size=(3, 3), strides=2, padding='same'),
-            # layers.Dropout(0.5),
-            # layers.BatchNormalization(),
+    def get_resnet_model(self):
 
-            layers.Flatten(),
+        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
+            print("ResNet50 is already train")
+            return load_model(self.name_model)
 
-            layers.Dense(512, activation='sigmoid'),
-            layers.Dense(1, activation="sigmoid")
-        ])
+        base_model = ResNet50(weights='imagenet', include_top=False)
+
+        for layer in base_model.layers:
+            layer.trainable = False
+
+        x = base_model.output
+        x = GlobalMaxPooling2D()(x)
+        x = Dense(1024, activation='relu')(x)
+        x = Dense(1024, activation='relu')(x)
+        x = Dense(512, activation='relu')(x)
+        x = Dense(1, activation=utils.FUNCTION_RESNET)(x)
+        model = Model(inputs=base_model.input, outputs=x)
+        print(model.summary())
+        adam = Adam(lr=self.learning_rate)
+        model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
+
+        return model
+
+    def get_bembonet_model(self):
+
+        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
+            print("BemboNet is already train")
+            return load_model(self.name_model)
+
+        model = tf.keras.Sequential()
+        model.add.Conv2D(32, 3, strides=3, padding='same', input_shape=(224, 224, 3)),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
+
+        model.add.Dense(256, activation=layers.LeakyReLU(alpha=0.3)),
+        model.add.Conv2D(60, 3, strides=3, padding='same'),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
+        model.add.Dropout(0.3),
+        model.add.BatchNormalization(),
+
+        model.add.Conv2D(60, 2, strides=2, padding='same'),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.MaxPooling2D(pool_size=2, strides=2, padding='same'),
+        model.add.Dropout(0.2),
+        model.add.BatchNormalization(),
+
+        model.add.Dense(1024),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.Conv2D(90, 3, strides=1, padding='same'),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
+        model.add.Dropout(0.3),
+        model.add.BatchNormalization(),
+
+        model.add.Conv2D(178, 3, strides=3, padding='same'),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
+        model.add.Dropout(0.3),
+        model.add.BatchNormalization(),
+
+        model.add.Dense(1024),
+        model.add.LeakyReLU(alpha=0.3),
+        model.add.Conv2D(60, 2, strides=2, padding='same', activation='relu'),
+        model.add.MaxPooling2D(pool_size=2, strides=2, padding='same'),
+        model.add.Dropout(0.5),
+        model.add.BatchNormalization(),
+
+        model.add.Dense(512, activation='sigmoid'),
+        model.add.Conv2D(90, 3, strides=3, padding='same', activation='sigmoid'),
+        # layers.MaxPooling2D(pool_size=(3, 3), strides=2, padding='same'),
+        # layers.Dropout(0.5),
+        # layers.BatchNormalization(),
+
+        model.add.Flatten(),
+
+        model.add.Dense(512, activation='sigmoid'),
+        model.add.Dense(1, activation="sigmoid")
+
 
         # model.compile(optimizer = tf.optimizers.Adam(),loss = 'binary_crossentropy',metrics=['accuracy'])
         # opt = SGD(lr=0.01)
-        opt = tf.keras.optimizers.Adam(lr=0.00001)
+        opt = tf.keras.optimizers.Adam(self.learning_rate)
         # model.compile(loss = "binary_crossentropy", optimizer=opt, metrics=['accuracy'])
         model.compile(optimizer='adam',
                       loss=tf.keras.losses.BinaryCrossentropy(reduction=tf.keras.losses.Reduction.SUM),
                       metrics=['accuracy'])
 
         return model
+
+    def fit_model(self, model,  X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback):
+        #weights = compute_class_weight('balanced', np.unique(y_train), y_train)
+        #w = {0: weights[0], 1:weights[1]}
+        #print(w)
+        #dimezza learning reate ogni 3 epoche se val_accuracy non incrementa
+        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor="val_accuracy", factor=0.5, patience=3, verbose=0, mode="max")
+        early_stopping = tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=8, mode="max", restore_best_weights=True)
+
+        model.fit(X_train, y_train,
+                  batch_size=self.batch_size,
+                  verbose=1,
+                  epochs=self.epochs,
+                  validation_data=(X_val, y_val),
+                  shuffle=False,
+                  #class_weight=w,
+                  callbacks=[csv_logger, model_checkpoint_callback, reduce_lr, early_stopping])
+
+    def train(self, model,  X_train, X_val, y_train, y_val, is_fine_tuning):
+        if is_fine_tuning:
+            name_model = self.name_model.split(".")[0]+"FineTuning"+self.name_model.split(".")[1]
+            name_logger = self.name_logger.split(".")[0]+"FineTuning"+self.name_logger.split(".")[1]
+        else :
+            name_model = self.name_model.split(".")[0]+"FeatureExtraction"+self.name_model.split(".")[1]
+            name_logger = self.name_logger.split(".")[0]+"FeatureExtraction"+self.name_logger.split(".")[1]
+
+        if os.path.isfile(name_model) and os.path.isfile(name_logger):
+            print("The model : {}\n is already train with this params".format(name_model))
+            return
+
+        csv_logger = CSVLogger(self.name_logger)
+        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=self.checkpoint_path,
+            save_weights_only=True,
+            monitor='val_accuracy',
+            mode='max',
+            save_best_only=True)
+
+        if tf.test.is_gpu_available():
+            with tf.device('/device:GPU:0'):
+                print("Work with GPU")
+                self.fit_model(model,  X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
+        else:
+            print("Work with CPU")
+            self.fit_model(model,  X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
+
+        model.save(name_model)
+        print("Model {}\ncsv logger {} are saved".format(name_model, name_logger))
