@@ -1,9 +1,11 @@
 from tensorflow.keras.utils import normalize
+import tensorflow as tf
 import os
 import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
 from utils import utils
+import sys
 
 class Preprocessor():
 
@@ -15,7 +17,7 @@ class Preprocessor():
         imm = cv2.imread(path)
         return cv2.cvtColor(imm, cv2.COLOR_BGR2RGB)
 
-    def mole_detect(self, origin_image_rgb, mask, delta):
+    def mole_detect(self, origin_image_rgb, mask, delta, network):
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         contour = None
         max_area = 0
@@ -43,22 +45,40 @@ class Preprocessor():
             y2 = origin_image_rgb.shape[1]  # - h - delta
 
         f = origin_image_rgb[y1 - delta:y2, x1 - delta:x2]
+        if network == "vgg16":
+            size = (224,224)
+        elif network == "resnet":
+            size = (224,224)
+        elif network == "xception":
+            size = (229,229)
+        elif network == "inception_v3":
+            size = (299,299)
+        else:
+            sys.exit("Error in preprocessing images")
         try:
-            k = cv2.resize(f, (224, 224), interpolation=cv2.INTER_CUBIC)
+            k = cv2.resize(f, size, interpolation=cv2.INTER_CUBIC)
             k = k / 255.
             if abs(k.max()) - abs(k.min()) < 0.7:
-                k = cv2.resize(origin_image_rgb, (224, 224), interpolation=cv2.INTER_CUBIC)
+                k = cv2.resize(origin_image_rgb, size, interpolation=cv2.INTER_CUBIC)
                 k = k / 255.
         except:
-            k = cv2.resize(origin_image_rgb, (224, 224), interpolation=cv2.INTER_CUBIC)
+            k = cv2.resize(origin_image_rgb, size, interpolation=cv2.INTER_CUBIC)
             k = k / 255.
 
-        normalizedImg = np.zeros((224, 224))
-        vgg_prep = tf.keras.applications.vgg16.preprocess_input(k * 255)
-        normalizedImg = cv2.normalize(vgg_prep, normalizedImg, 0, 1, cv2.NORM_MINMAX)
+        normalizedImg = np.zeros(size)
+        if utils.USING_PREPROCESSING_OF_NEURAL_NETWORK:
+            if network=="vgg16":
+                k = tf.keras.applications.vgg16.preprocess_input(k * 255)
+            elif network=="resnet":
+                k = tf.keras.applications.resnet.preprocess_input(k * 255)
+            elif network=="xception":
+                k = tf.keras.applications.xception.preprocess_input(k * 255)
+            elif network=="inception_v3":
+                k = tf.keras.applications.inception_v3.preprocess_input(k * 255)
+        normalizedImg = cv2.normalize(k, normalizedImg, 0, 1, cv2.NORM_MINMAX)
         return normalizedImg
 
-    def unet_preprocessing(self, path, model):
+    def unet_preprocessing(self, path, model, network):
         original = self.read_in_rgb(path)
         original = cv2.resize(original, (utils.IMG_SIZE_UNET, utils.IMG_SIZE_UNET), interpolation=cv2.INTER_CUBIC)
         img_to_gray = cv2.cvtColor(original, cv2.COLOR_RGB2GRAY)
@@ -68,10 +88,10 @@ class Preprocessor():
         # Predict and threshold for values above 0.5 probability
         # Change the probability threshold to low value (e.g. 0.05) for watershed demo.
         prediction_mask = (model.predict(to_input)[0, :, :, 0] > 0.25).astype(np.uint8)
-        return self.mole_detect(original, prediction_mask, self.delta)
+        return self.mole_detect(original, prediction_mask, self.delta, network)
 
-    def cv_preprocessing(self, path):
-
+    def cv_preprocessing(self, network):
+        '''
         original = self.read_in_rgb(path)
         # remove noise and hair
         #dst = cv2.fastNlMeansDenoisingColored(original, None, 10, 10, 7, 21)
@@ -85,12 +105,11 @@ class Preprocessor():
         saturation = cv2.cvtColor(original, cv2.COLOR_RGB2HSV)[..., 1]
         # Find best (Otsu) threshold to divide black from white, and apply it
         ret, mask = cv2.threshold(saturation, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return self.mole_detect(original, mask, self.delta)
+        return self.mole_detect(original, mask, self.delta, network)
         '''
         img = img / 255.
         saturation = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)[..., 1]
         ret, mask = cv2.threshold(saturation, 0.5, 1, 0)  # cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         mask = mask.astype(np.uint8)
-        k = mole_detect(img, mask, 0)
+        k = mole_detect(img, mask, self.delta, network)
         return k
-        '''

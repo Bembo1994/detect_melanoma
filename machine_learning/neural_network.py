@@ -1,6 +1,7 @@
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.applications.xception import Xception
 from tensorflow.keras.applications.resnet50 import ResNet50
 from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -21,7 +22,7 @@ import pandas as pd
 
 class NeuralNetworks():
 
-    def __init__(self, is_unet, is_vgg, is_resnet, cv_or_unet_preprocessing):
+    def __init__(self, is_unet, is_vgg, is_resnet, is_xception, is_inception_v3, cv_or_unet_preprocessing):
 
         self.cv_or_unet_preprocessing = cv_or_unet_preprocessing
 
@@ -53,15 +54,24 @@ class NeuralNetworks():
             self.learning_rate = utils.LR_RESNET
             self.activation_function = utils.FUNCTION_RESNET
             self.head_name = "resnet"
-        if is_bembonet:
-            self.img_size = utils.IMG_SIZE_BEMBONET
-            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/resnet50/"
+        if is_xception:
+            self.img_size = utils.IMG_SIZE_VGG
+            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/xception/"
             self.make_dirs(self.checkpoint_path)
-            self.epochs = utils.EPOCHS_BEMBONET
-            self.batch_size = utils.BS_BEMBONET
-            self.learning_rate = utils.LR_BEMBONET
-            self.activation_function = utils.FUNCTION_BEMBONET
-            self.head_name = "bembonet"
+            self.epochs = utils.EPOCHS_VGG
+            self.batch_size = utils.BS_VGG
+            self.learning_rate = utils.LR_VGG
+            self.activation_function = utils.FUNCTION_VGG
+            self.head_name = "xception"
+        if is_inception_v3 :
+            self.img_size = utils.IMG_SIZE_INCEPTION
+            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/xception/"
+            self.make_dirs(self.checkpoint_path)
+            self.epochs = utils.EPOCHS_INCEPTION
+            self.batch_size = utils.BS_INCEPTION
+            self.learning_rate = utils.LR_INCEPTION
+            self.activation_function = utils.FUNCTION_INCEPTION
+            self.head_name = "inception_v3"
 
         app_name_model = '{}_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(self.head_name, self.cv_or_unet_preprocessing, self.epochs,
                                                                        self.batch_size,
@@ -151,42 +161,26 @@ class NeuralNetworks():
 
     def get_vgg_model(self):
 
-        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
+        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger):
             print("VGG16 is already train")
             return load_model(self.name_model)
 
-        old_vgg = VGG16(weights='imagenet', include_top=False, input_shape=(self.img_size, self.img_size, 3))
+        old_vgg = VGG16(weights=None, include_top=False, input_shape=(self.img_size, self.img_size, 3))
 
-        # Freeze 0-14 the layers
-        for layer in old_vgg.layers[:]:
-            layer.trainable = False
-
-        # Check the trainable status of the individual layers
-        for layer in old_vgg.layers:
-            print(layer, layer.trainable)
-
-        print(old_vgg.summary())
-
+        old_vgg.trainable = False
         # Create the model
         model = keras.Sequential()
-
         # Add the vgg convolutional base model
         model.add(old_vgg)
-
         # Add new layers
         model.add(Flatten())
-        model.add(Dense(256, activation='relu'))
-        model.add(Dropout(0.5))
-        #model.add(Dense(4096, activation='softmax'))
-        model.add(Dense(1, activation='sigmoid'))  # sigmoid or relu
-
-        # Show a summary of the model. Check the number of trainable parameters
-        print(model.summary())
-
+        model.add(Dense(4096, activation='relu'))
+        model.add(Dropout(0.2))
+        model.add(Dense(512, activation='relu'))
+        model.add(Dense(1, activation='sigmoid', activity_regularizer=tf.keras.regularizers.l2(1e-5)))  # sigmoid or relu
         opt = Adam(learning_rate=self.learning_rate)  # 0.001 default
         model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
         print(model.summary())
-
         return model
 
     def get_resnet_model(self):
@@ -213,74 +207,45 @@ class NeuralNetworks():
 
         return model
 
-    def get_bembonet_model(self):
+    def get_xception_model(self):
 
-        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
-            print("BemboNet is already train")
-            return load_model(self.name_model)
-
-        model = tf.keras.Sequential()
-        model.add.Conv2D(32, 3, strides=3, padding='same', input_shape=(224, 224, 3)),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-
-        model.add.Dense(256, activation=layers.LeakyReLU(alpha=0.3)),
-        model.add.Conv2D(60, 3, strides=3, padding='same'),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-        model.add.Dropout(0.3),
-        model.add.BatchNormalization(),
-
-        model.add.Conv2D(60, 2, strides=2, padding='same'),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.MaxPooling2D(pool_size=2, strides=2, padding='same'),
-        model.add.Dropout(0.2),
-        model.add.BatchNormalization(),
-
-        model.add.Dense(1024),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.Conv2D(90, 3, strides=1, padding='same'),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-        model.add.Dropout(0.3),
-        model.add.BatchNormalization(),
-
-        model.add.Conv2D(178, 3, strides=3, padding='same'),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.MaxPooling2D(pool_size=(3, 3), strides=3, padding='same'),
-        model.add.Dropout(0.3),
-        model.add.BatchNormalization(),
-
-        model.add.Dense(1024),
-        model.add.LeakyReLU(alpha=0.3),
-        model.add.Conv2D(60, 2, strides=2, padding='same', activation='relu'),
-        model.add.MaxPooling2D(pool_size=2, strides=2, padding='same'),
-        model.add.Dropout(0.5),
-        model.add.BatchNormalization(),
-
-        model.add.Dense(512, activation='sigmoid'),
-        model.add.Conv2D(90, 3, strides=3, padding='same', activation='sigmoid'),
-        # layers.MaxPooling2D(pool_size=(3, 3), strides=2, padding='same'),
-        # layers.Dropout(0.5),
-        # layers.BatchNormalization(),
-
-        model.add.Flatten(),
-
-        model.add.Dense(512, activation='sigmoid'),
-        model.add.Dense(1, activation="sigmoid")
-
-
-        # model.compile(optimizer = tf.optimizers.Adam(),loss = 'binary_crossentropy',metrics=['accuracy'])
-        # opt = SGD(lr=0.01)
-        opt = tf.keras.optimizers.Adam(self.learning_rate)
-        # model.compile(loss = "binary_crossentropy", optimizer=opt, metrics=['accuracy'])
-        model.compile(optimizer='adam',
-                      loss=tf.keras.losses.BinaryCrossentropy(reduction=tf.keras.losses.Reduction.SUM),
-                      metrics=['accuracy'])
-
+        base_model = tf.keras.applications.Xception(
+            weights='imagenet',  # Load weights pre-trained on ImageNet.
+            input_shape=(229, 229, 3),
+            include_top=False)  # Do not include the ImageNet classifier at the top.
+        base_model.trainable = False
+        inputs = keras.Input(shape=(229, 229, 3))
+        x = base_model(inputs, training=False)
+        # Convert features of shape `base_model.output_shape[1:]` to vectors
+        x = keras.layers.GlobalAveragePooling2D()(x)
+        # A Dense classifier with a single unit (binary classification)
+        outputs = keras.layers.Dense(1)(x)
+        model = keras.Model(inputs, outputs)
+        model.compile(optimizer=keras.optimizers.Adam(),
+                      loss=keras.losses.BinaryCrossentropy(from_logits=True),
+                      metrics=[keras.metrics.BinaryAccuracy()])
         return model
 
-    def fit_model(self, model,  X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback):
+    def get_inception_v3_model(self):
+
+        base_model = tf.keras.applications.InceptionV3(weights='imagenet', input_shape=(299, 299, 3), include_top=False)  # Do not include the ImageNet classifier at the top.
+        base_model.trainable = False
+
+        inputs = keras.Input(shape=(299, 299, 3))
+
+        x = base_model(inputs, training=False)
+        # Convert features of shape `base_model.output_shape[1:]` to vectors
+        x = keras.layers.GlobalAveragePooling2D()(x)
+        x = keras.layers.Dense(512)(x)
+        # A Dense classifier with a single unit (binary classification)
+        outputs = keras.layers.Dense(1)(x)
+        model = keras.Model(inputs, outputs)
+        model.compile(optimizer=keras.optimizers.Adam(),
+                      loss=keras.losses.BinaryCrossentropy(from_logits=True),
+                      metrics=[keras.metrics.BinaryAccuracy()])
+        return model
+
+    def fit_model(self, model,  train_ds, val_ds, csv_logger, model_checkpoint_callback):
         #weights = compute_class_weight('balanced', np.unique(y_train), y_train)
         #w = {0: weights[0], 1:weights[1]}
         #print(w)
@@ -288,28 +253,28 @@ class NeuralNetworks():
         reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor="val_accuracy", factor=0.5, patience=3, verbose=0, mode="max")
         early_stopping = tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=8, mode="max", restore_best_weights=True)
 
-        model.fit(X_train, y_train,
+        model.fit(train_ds,
                   batch_size=self.batch_size,
                   verbose=1,
                   epochs=self.epochs,
-                  validation_data=(X_val, y_val),
+                  validation_data=val_ds,
                   shuffle=False,
                   #class_weight=w,
                   callbacks=[csv_logger, model_checkpoint_callback, reduce_lr, early_stopping])
 
-    def train(self, model,  X_train, X_val, y_train, y_val, is_fine_tuning):
+    def train(self, model,  train_ds, val_ds, is_fine_tuning):
         if is_fine_tuning:
             name_model = self.name_model.split(".")[0]+"FineTuning"+self.name_model.split(".")[1]
             name_logger = self.name_logger.split(".")[0]+"FineTuning"+self.name_logger.split(".")[1]
         else :
-            name_model = self.name_model.split(".")[0]+"FeatureExtraction"+self.name_model.split(".")[1]
-            name_logger = self.name_logger.split(".")[0]+"FeatureExtraction"+self.name_logger.split(".")[1]
+            name_model = self.name_model.split(".")[0]+"Transfer_Learning"+self.name_model.split(".")[1]
+            name_logger = self.name_logger.split(".")[0]+"Transfer_Learning"+self.name_logger.split(".")[1]
 
         if os.path.isfile(name_model) and os.path.isfile(name_logger):
             print("The model : {}\n is already train with this params".format(name_model))
             return
 
-        csv_logger = CSVLogger(self.name_logger)
+        csv_logger = CSVLogger(self.name_logger, append=True)
         model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=self.checkpoint_path,
             save_weights_only=True,
@@ -320,10 +285,10 @@ class NeuralNetworks():
         if tf.test.is_gpu_available():
             with tf.device('/device:GPU:0'):
                 print("Work with GPU")
-                self.fit_model(model,  X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
+                self.fit_model(model,  train_ds, val_ds, csv_logger, model_checkpoint_callback)
         else:
             print("Work with CPU")
-            self.fit_model(model,  X_train, X_val, y_train, y_val, csv_logger, model_checkpoint_callback)
+            self.fit_model(model, train_ds, val_ds, csv_logger, model_checkpoint_callback)
 
         model.save(name_model)
         print("Model {}\ncsv logger {} are saved".format(name_model, name_logger))
