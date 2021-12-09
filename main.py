@@ -29,8 +29,8 @@ def main():
     '''dataset download and analysis'''
     #ds.download_metadata()
     #ds.download_dataset_classification()
-    #ds.download_dataset_segmentation()
-    ds.data_augmentation()
+    ds.download_dataset_segmentation()
+    #ds.data_augmentation()
 
     ''' for segmentation -> UNet '''
     #training and test unet
@@ -48,20 +48,22 @@ def main():
     '''for classification -> VGG16'''
     # training and test vgg
     if eval(args.train_vgg) or eval(args.test_vgg):
-        vgg16 = neural_network.NeuralNetworks(False, True, False, False, cv_or_unet_preprocessing)
+        vgg16 = neural_network.NeuralNetworks(False, True, False, False, False, cv_or_unet_preprocessing)
         vgg16_model = vgg16.get_vgg_model()
         if eval(args.train_vgg):
-            train_ds, val_ds = ds.get_dataset_classification_test("vgg16")
+            #X_train, X_test, y_train, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, False, "vgg16")
+            train_ds, val_ds = ds.get_dataset_classification_train("vgg16")
             print("Transfer Learning")
             train_model(vgg16, vgg16_model, train_ds, val_ds, False)
         if eval(args.test_vgg):
             test_ds = ds.get_dataset_classification_test("vgg16")
+            #X_test, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, True, "vgg16")
             test_model(vgg16_model, test_ds)
 
     '''for classification -> ResNet50'''
     # training and test vgg
     if eval(args.train_resnet) or eval(args.test_resnet):
-        resnet = neural_network.NeuralNetworks(False, False, True, False, cv_or_unet_preprocessing)
+        resnet = neural_network.NeuralNetworks(False, False, True, False, False, cv_or_unet_preprocessing)
         resnet_model = resnet.get_resnet_model()
         if eval(args.train_resnet):
             train_ds, val_ds = ds.get_dataset_classification_train("resnet")
@@ -70,18 +72,19 @@ def main():
             train_model(resnet, resnet_model, train_ds, val_ds, False)
         if eval(args.test_resnet):
             test_ds = ds.get_dataset_classification_test("resnet")
+            #X_test, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, True, "resnet")
             test_model(resnet_model, test_ds)
 
     '''for classification -> Xception'''
-    # training and test vgg
+    # training and test xception
     if eval(args.train_xception) or eval(args.test_xceptiont):
-        Xception = neural_network.NeuralNetworks(False, False, False, True, cv_or_unet_preprocessing)
+        Xception = neural_network.NeuralNetworks(False, False, False, True, False, cv_or_unet_preprocessing)
         Xception_model = Xception.get_resnet_model()
         if eval(args.train_xception):
             train_ds, val_ds = ds.get_dataset_classification_train("xception")
             #X_train, X_test, y_train, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, False, "xception")
             print("TransferLearning")
-            train_model(Xception, Xception_model, train_ds, val_ds, False)
+            train_model(Xception, Xception_model,  train_ds, val_ds, False)
             #train_model(Xception, Xception_model, X_train, X_test, y_train, y_test, False)
         if eval(args.test_xceptiont):
             #X_test, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, True, "xception")

@@ -12,12 +12,14 @@ class Preprocessor():
     def __init__(self):
         self.unet = load_model("machine_learning/checkpoints/unet/unet_model_colab_3500i_30e_32bs_0005lr_relu.hdf5")
         self.delta = utils.DELTA_PREPROCESSING
+        self.net = "vgg16"
 
     def read_in_rgb(self, path):
         imm = cv2.imread(path)
         return cv2.cvtColor(imm, cv2.COLOR_BGR2RGB)
 
-    def mole_detect(self, origin_image_rgb, mask, delta, network):
+    def mole_detect(self, origin_image_rgb, mask, delta):
+        network = self.net
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         contour = None
         max_area = 0
@@ -90,7 +92,7 @@ class Preprocessor():
         prediction_mask = (model.predict(to_input)[0, :, :, 0] > 0.25).astype(np.uint8)
         return self.mole_detect(original, prediction_mask, self.delta, network)
 
-    def cv_preprocessing(self, network):
+    def cv_preprocessing(self, img):
         '''
         original = self.read_in_rgb(path)
         # remove noise and hair
@@ -105,11 +107,11 @@ class Preprocessor():
         saturation = cv2.cvtColor(original, cv2.COLOR_RGB2HSV)[..., 1]
         # Find best (Otsu) threshold to divide black from white, and apply it
         ret, mask = cv2.threshold(saturation, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return self.mole_detect(original, mask, self.delta, network)
+        return self.mole_detect(original, mask, self.delta)
         '''
         img = img / 255.
         saturation = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)[..., 1]
         ret, mask = cv2.threshold(saturation, 0.5, 1, 0)  # cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         mask = mask.astype(np.uint8)
-        k = mole_detect(img, mask, self.delta, network)
+        k = self.mole_detect(img, mask, self.delta)
         return k

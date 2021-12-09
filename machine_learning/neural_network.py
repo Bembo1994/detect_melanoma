@@ -245,7 +245,7 @@ class NeuralNetworks():
                       metrics=[keras.metrics.BinaryAccuracy()])
         return model
 
-    def fit_model(self, model,  train_ds, val_ds, csv_logger, model_checkpoint_callback):
+    def fit_model(self, model, train_ds, val_ds, csv_logger, model_checkpoint_callback):
         #weights = compute_class_weight('balanced', np.unique(y_train), y_train)
         #w = {0: weights[0], 1:weights[1]}
         #print(w)
@@ -254,7 +254,7 @@ class NeuralNetworks():
         early_stopping = tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=8, mode="max", restore_best_weights=True)
 
         model.fit(train_ds,
-                  batch_size=self.batch_size,
+                  #batch_size=self.batch_size,
                   verbose=1,
                   epochs=self.epochs,
                   validation_data=val_ds,
@@ -262,7 +262,7 @@ class NeuralNetworks():
                   #class_weight=w,
                   callbacks=[csv_logger, model_checkpoint_callback, reduce_lr, early_stopping])
 
-    def train(self, model,  train_ds, val_ds, is_fine_tuning):
+    def train(self, model, train_ds, val_ds, is_fine_tuning):
         if is_fine_tuning:
             name_model = self.name_model.split(".")[0]+"FineTuning"+self.name_model.split(".")[1]
             name_logger = self.name_logger.split(".")[0]+"FineTuning"+self.name_logger.split(".")[1]
@@ -285,7 +285,7 @@ class NeuralNetworks():
         if tf.test.is_gpu_available():
             with tf.device('/device:GPU:0'):
                 print("Work with GPU")
-                self.fit_model(model,  train_ds, val_ds, csv_logger, model_checkpoint_callback)
+                self.fit_model(model,train_ds, val_ds, csv_logger, model_checkpoint_callback)
         else:
             print("Work with CPU")
             self.fit_model(model, train_ds, val_ds, csv_logger, model_checkpoint_callback)

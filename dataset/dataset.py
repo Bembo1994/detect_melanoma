@@ -44,6 +44,9 @@ class Dataset():
         self.preprocessor = preprocess_image.Preprocessor()
         self.size_test_set = utils.SIZE_TEST_SET
 
+        self.benign_used = set()
+        self.malignant_used = set()
+
     def make_dirs(self,path):
         if not os.path.exists(path):
             print("Make directory : {}".format(path))
@@ -147,6 +150,8 @@ class Dataset():
             sys.exit("ERROR : Before download the dataset")
         df = pd.read_csv(self.savePath+'dataframe_cleaned_segmentation.csv')
         for i, img_id in enumerate(df["_id"]) :
+            if i%1000==0 and i >0:
+                print("Images Segmentation downloading : {}".format(i))
             name = df.iloc[i]["name"]
             flag = False
             if not os.path.isfile(self.mask_directory+"%s.tiff" % name) and not os.path.isfile(self.image_directory+"%s.tiff" % name):
@@ -155,15 +160,11 @@ class Dataset():
                 segmentation = self.api.getJson('segmentation?imageId=' + img_id)
                 if len(segmentation)>0: #check if image mask exists
                     imageFileResp_img = self.api.get('image/%s/download' % img_id)
-
                     imageFileResp_seg = self.api.get('segmentation/%s/mask' % segmentation[0]['_id'])
-
                     imageFileResp_seg.raise_for_status()
                     imageFileResp_img.raise_for_status()
-
                     imageFileOutputPath_seg = os.path.join(self.segmentation_path+"mask/", '%s.tiff' % name)
                     imageFileOutputPath_img = os.path.join(self.segmentation_path+"img/", '%s.tiff' % name)
-
                     with open(imageFileOutputPath_seg, 'wb') as imageFileOutputStream_seg:
                         for chunk in imageFileResp_seg:
                             imageFileOutputStream_seg.write(chunk)
@@ -174,8 +175,8 @@ class Dataset():
         print("Downloaded image for segmentation")
 
     def data_augmentation(self):
-        def aug(dir):
-            name_class = dir.split("/")[-1]
+        def aug(dir, path):
+            name_class = path.split("/")[-2]
             for i in dir:
                 img = self.preprocessor.read_in_rgb(self.classification_path + "train/"+name_class+"/" + i)
                 degrees = [90, 180, 270]
@@ -183,7 +184,7 @@ class Dataset():
                 flippings = [1, 0, -1]
                 combinations = list(itertools.product(degrees, darkness, flippings))
                 random.shuffle(combinations)
-                for _ in range(2):
+                for _ in range(3):
                     c = random.choice(combinations)
                     # grab the dimensions of the image and calculate the center of the image
                     (h, w) = img.shape[:2]
@@ -197,10 +198,11 @@ class Dataset():
                     cv2.imwrite(self.classification_path + name + i, cv2.cvtColor(flipped, cv2.COLOR_BGR2RGB))
 
         data_to_aug = os.listdir(self.classification_path+"train/malignant/")
-        aug(data_to_aug)
+        aug(data_to_aug, self.classification_path+"train/malignant/")
         data_to_aug = os.listdir(self.classification_path+"train/benign/")
-        aug(data_to_aug)
+        aug(data_to_aug, self.classification_path+"train/benign/")
 
+    '''
     def get_dataset_segmentation(self, is_for_test_set):
 
         dataset = []
@@ -242,6 +244,7 @@ class Dataset():
         return X_train, X_test, y_train, y_test
 
     def get_dataset_classification(self, cv_or_unet_preprocessing, is_for_test_set, network):
+        self.preprocessor.net = network
         dataset = []
         label = []
         flag_validation = False
@@ -253,20 +256,21 @@ class Dataset():
 
         benigns = os.listdir(path + "/benign/")
         malignants = os.listdir(path + "/malignant/")
-
+        random.shuffle(benigns)
+        random.shuffle(malignants)
         for image_name in benigns:
             if cv_or_unet_preprocessing == "cv":
-                result = self.preprocessor.cv_preprocessing(path + "/benign/" + image_name, network)
+                result = self.preprocessor.cv_preprocessing(path + "/benign/" + image_name)
             else :
-                result = self.preprocessor.unet_preprocessing(path + "/benign/" + image_name, network)
+                result = self.preprocessor.unet_preprocessing(path + "/benign/" + image_name)
             dataset.append(np.array(result))
             label.append(0)
 
         for image_name in malignants:
             if cv_or_unet_preprocessing == "cv":
-                result = self.preprocessor.cv_preprocessing(path + "/malignant/" + image_name, network)
+                result = self.preprocessor.cv_preprocessing(path + "/malignant/" + image_name)
             else :
-                result = self.preprocessor.unet_preprocessing(path + "/malignant/" + image_name, network)
+                result = self.preprocessor.unet_preprocessing(path + "/malignant/" + image_name)
             dataset.append(np.array(result))
             label.append(1)
 
@@ -287,17 +291,17 @@ class Dataset():
 
             for image_name in benigns:
                 if cv_or_unet_preprocessing == "cv":
-                    result = self.preprocessor.cv_preprocessing(path + "/benign/" + image_name, network)
+                    result = self.preprocessor.cv_preprocessing(path + "/benign/" + image_name)
                 else:
-                    result = self.preprocessor.unet_preprocessing(path + "/benign/" + image_name, network)
+                    result = self.preprocessor.unet_preprocessing(path + "/benign/" + image_name)
                 dataset_val.append(np.array(result))
                 label_val.append(0)
 
             for image_name in malignants:
                 if cv_or_unet_preprocessing == "cv":
-                    result = self.preprocessor.cv_preprocessing(path + "/malignant/" + image_name, network)
+                    result = self.preprocessor.cv_preprocessing(path + "/malignant/" + image_name)
                 else:
-                    result = self.preprocessor.unet_preprocessing(path + "/malignant/" + image_name, network)
+                    result = self.preprocessor.unet_preprocessing(path + "/malignant/" + image_name)
                 dataset_val.append(np.array(result))
                 label_val.append(1)
 
@@ -314,6 +318,8 @@ class Dataset():
         #X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size=0.1, random_state=123)
         #return X_train, X_test, y_train, y_test
 
+    '''
+    
     def get_dataset_classification_train(self, network):
         if network == "vgg16":
             size = (224,224)
@@ -325,11 +331,11 @@ class Dataset():
             size = (299,299)
         else:
             sys.exit("Error in size images")
-        datagen = ImageDataGenerator(preprocessing_function=cv_preprocessing(network))
-        train_it = datagen.flow_from_directory(self.classification_path + "train/", classes=['benign', 'malignant'], batch_size=150,
-                                               color_mode="rgb", target_size=size)
-        val_it = datagen.flow_from_directory(self.classification_path + "validation/", classes=['benign', 'malignant'], batch_size=150,
-                                               color_mode="rgb", target_size=size)
+        datagen = ImageDataGenerator(preprocessing_function=self.preprocessor.cv_preprocessing)
+        train_it = datagen.flow_from_directory(self.classification_path + "train/", classes=['benign', 'malignant'], batch_size=2,
+                                               color_mode="rgb", target_size=size, class_mode="binary")
+        val_it = datagen.flow_from_directory(self.classification_path + "validation/", classes=['benign', 'malignant'], batch_size=2,
+                                               color_mode="rgb", target_size=size, class_mode="binary")
         return train_it, val_it
 
     def get_dataset_classification_test(self, network):
@@ -343,8 +349,8 @@ class Dataset():
             size = (299,299)
         else:
             sys.exit("Error in preprocessing images")
-        datagen = ImageDataGenerator(preprocessing_function=cv_preprocessing(network))
-        test_it = datagen.flow_from_directory(self.classification_path + "test/", classes=['benign', 'malignant'], batch_size=150,
-                                               color_mode="rgb", target_size=size)
+        datagen = ImageDataGenerator(preprocessing_function=self.preprocessor.cv_preprocessing)
+        test_it = datagen.flow_from_directory(self.classification_path + "test/", classes=['benign', 'malignant'], batch_size=2,
+                                               color_mode="rgb", target_size=size, class_mode="binary")
 
         return test_it
