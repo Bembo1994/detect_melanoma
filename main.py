@@ -61,7 +61,7 @@ def main():
             test_model(vgg16_model, test_ds)
 
     '''for classification -> ResNet50'''
-    # training and test vgg
+    # training and test resnet50
     if eval(args.train_resnet) or eval(args.test_resnet):
         resnet = neural_network.NeuralNetworks(False, False, True, False, False, cv_or_unet_preprocessing)
         resnet_model = resnet.get_resnet_model()
@@ -91,6 +91,22 @@ def main():
             test_ds = ds.get_dataset_classification_test("xception")
             test_model(Xception_model, test_ds)
 
+    '''for classification -> InceptionV3'''
+    # training and test inception v3
+    if eval(args.train_inception) or eval(args.test_inception):
+        inceptionV3 = neural_network.NeuralNetworks(False, False, False, False, True, cv_or_unet_preprocessing)
+        inceptionV3_model = inceptionV3.get_resnet_model()
+        if eval(args.train_inception):
+            train_ds, val_ds = ds.get_dataset_classification_train("inception_v3")
+            #X_train, X_test, y_train, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, False, "xception")
+            print("TransferLearning")
+            train_model(inceptionV3, inceptionV3_model,  train_ds, val_ds, False)
+            #train_model(Xception, Xception_model, X_train, X_test, y_train, y_test, False)
+        if eval(args.test_inception):
+            #X_test, y_test = ds.get_dataset_classification(cv_or_unet_preprocessing, True, "xception")
+            test_ds = ds.get_dataset_classification_test("inception_v3")
+            test_model(inceptionV3_model, test_ds)
+
 if __name__== "__main__" :
     parser = argparse.ArgumentParser()
     parser.add_argument("--train_unet", help="(Boolean) Train UNet ?")
@@ -101,6 +117,8 @@ if __name__== "__main__" :
     parser.add_argument("--test_resnet", help="(Boolean) Test ResNet50 ?")
     parser.add_argument("--train_xception", help="(Boolean) Train Xception ?")
     parser.add_argument("--test_xceptiont", help="(Boolean) Test Xception ?")
+    parser.add_argument("--train_inception", help="(Boolean) Train InceptionV3 ?")
+    parser.add_argument("--test_inception", help="(Boolean) Test InceptionV3 ?")
     parser.add_argument("--cv_or_unet_preprocessing", help="(type in 'cv' or 'unet') Train neural networks with cv or unet preprocessing?")
     args = parser.parse_args()
     main()
