@@ -1,6 +1,9 @@
+from tensorflow.python.keras.utils import tf_utils
+from tensorflow.python.client import device_lib
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
+from keras.applications.nasnet import NASNetLarge
 from tensorflow.keras.applications.xception import Xception
 from tensorflow.keras.applications.resnet50 import ResNet50
 from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
@@ -8,10 +11,9 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras.layers import Dense, Dropout, Flatten
 from pathlib import Path
-from tensorflow.keras.preprocessing import image_dataset_from_directory
 from tensorflow.keras import layers
 from tensorflow import keras
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, GlobalMaxPooling2D, UpSampling2D, concatenate, Conv2DTranspose, BatchNormalization, Dropout, Lambda
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, GlobalMaxPooling2D, UpSampling2D, concatenate, Conv2DTranspose, BatchNormalization, Dropout, Lambda, GlobalAveragePooling2D, Activation
 from tensorflow.keras.models import load_model
 from tensorflow.keras.callbacks import CSVLogger
 import os
@@ -19,82 +21,87 @@ import tensorflow as tf
 import numpy as np
 from utils import utils
 import pandas as pd
+from keras.utils.vis_utils import plot_model
+
 
 class NeuralNetworks():
 
-    def __init__(self, is_unet, is_vgg, is_resnet, is_xception, is_inception_v3, cv_or_unet_preprocessing):
+    def __init__(self, network, cv_or_unet_preprocessing):
 
         self.cv_or_unet_preprocessing = cv_or_unet_preprocessing
-
-        if is_unet:
+        self.head_name = network
+        self.path_model_tmp = ""
+        if self.head_name == "unet":
             self.img_size = utils.IMG_SIZE_UNET
             self.img_channels = utils.IMG_CHANNELS_UNET
-            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/unet/"
-            self.make_dirs(self.checkpoint_path)
             self.epochs = utils.EPOCHS_UNET
             self.batch_size = utils.BS_UNET
             self.learning_rate = utils.LR_UNET
             self.activation_function = utils.FUNCTION_UNET
-            self.head_name = "unet"
-        if is_vgg:
+        if self.head_name == "vgg16":
             self.img_size = utils.IMG_SIZE_VGG
-            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/vgg16/"
-            self.make_dirs(self.checkpoint_path)
             self.epochs = utils.EPOCHS_VGG
             self.batch_size = utils.BS_VGG
             self.learning_rate = utils.LR_VGG
             self.activation_function = utils.FUNCTION_VGG
-            self.head_name = "vgg"
-        if is_resnet:
+        if self.head_name == "resnet":
             self.img_size = utils.IMG_SIZE_RESNET
-            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/resnet50/"
-            self.make_dirs(self.checkpoint_path)
             self.epochs = utils.EPOCHS_RESNET
             self.batch_size = utils.BS_RESNET
             self.learning_rate = utils.LR_RESNET
             self.activation_function = utils.FUNCTION_RESNET
-            self.head_name = "resnet"
-        if is_xception:
-            self.img_size = utils.IMG_SIZE_VGG
-            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/xception/"
-            self.make_dirs(self.checkpoint_path)
-            self.epochs = utils.EPOCHS_VGG
-            self.batch_size = utils.BS_VGG
-            self.learning_rate = utils.LR_VGG
-            self.activation_function = utils.FUNCTION_VGG
-            self.head_name = "xception"
-        if is_inception_v3 :
+        if self.head_name == "inception_v3" :
             self.img_size = utils.IMG_SIZE_INCEPTION
-            self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/xception/"
-            self.make_dirs(self.checkpoint_path)
             self.epochs = utils.EPOCHS_INCEPTION
             self.batch_size = utils.BS_INCEPTION
             self.learning_rate = utils.LR_INCEPTION
             self.activation_function = utils.FUNCTION_INCEPTION
-            self.head_name = "inception_v3"
 
-        app_name_model = '{}_model_{}_{}e_{}bs_{}lr_{}.hdf5'.format(self.head_name, self.cv_or_unet_preprocessing, self.epochs,
-                                                                       self.batch_size,
-                                                                       str(self.learning_rate).split(".")[1],
-                                                                       self.activation_function)
-        app_name_logger = '{}_training_logger_{}_{}e_{}bs_{}lr_{}.csv'.format(self.head_name, self.cv_or_unet_preprocessing, self.epochs,
-                                                                       self.batch_size,
-                                                                       str(self.learning_rate).split(".")[1],
-                                                                       self.activation_function)
-
-        self.name_model = self.checkpoint_path + app_name_model
-        self.name_logger = self.checkpoint_path + app_name_logger
+        self.head_network = ""
+        self.checkpoint_path = os.path.dirname(os.path.realpath(__file__)) + "/checkpoints/"
+        self.make_dirs(self.checkpoint_path)
 
     def make_dirs(self, path):
         if not os.path.exists(path):
             print("Make directory : {}".format(path))
             os.makedirs(path)
 
-    def get_unet_model(self):
+    def get_model(self):
+        if self.head_name == "unet":
+            return self.get_unet_model()
+        if self.head_name == "vgg16":
+            return self.get_vgg_model()
+        if self.head_name == "resnet":
+            return self.get_resnet_model()
+        if self.head_name == "inception_v3" :
+            return self.get_inception_v3_model()
 
-        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
-            print("UNet is already train")
-            return load_model(self.name_model)
+    def check_if_already_train(self):
+        checkpoints_dirs = os.listdir(self.checkpoint_path)
+        for dir in checkpoints_dirs:
+            if self.head_name in dir and "unet" in self.head_name:
+                checkpoint_path = self.checkpoint_path + "{}_{}_lr_{}_bs_{}_{}".format(self.head_name,
+                                                                                                   self.activation_function,
+                                                                                                   str(self.learning_rate).replace(".","-"),
+                                                                                                   self.batch_size)
+                print("Loading model")
+                return True, checkpoint_path
+            elif self.head_name in dir and "unfrozen" in dir:
+                checkpoint_path = self.checkpoint_path + "{}_{}_{}_lr_{}_bs_{}_{}_{}".format(self.head_name,
+                                                                                                   self.activation_function,
+                                                                                                   self.cv_or_unet_preprocessing,
+                                                                                                   str(utils.LR_UNFROZEN).replace(".","-"),
+                                                                                                   self.batch_size,
+                                                                                                   "unfrozen", self.head_network)
+                print("Loading model")
+                return True, checkpoint_path
+        return False, ""
+
+    def get_unet_model(self):
+        self.head_network = "_rmsprop"
+        flag, checkpoint_path = self.check_if_already_train()
+        if flag:
+            return load_model(checkpoint_path)
 
         # Build the model
         inputs = Input((self.img_size, self.img_size, self.img_channels))
@@ -160,135 +167,169 @@ class NeuralNetworks():
         return model
 
     def get_vgg_model(self):
+        self.head_network = "2x4096"
+        flag, checkpoint_path = self.check_if_already_train()
+        if flag:
+            return load_model(checkpoint_path)
 
-        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger):
-            print("VGG16 is already train")
-            return load_model(self.name_model)
+        base_model = VGG16(weights="imagenet", include_top=False, input_shape=(self.img_size, self.img_size, 3))
+        
+        for layer in base_model.layers:
+            layer.trainable = False
 
-        old_vgg = VGG16(weights=None, include_top=False, input_shape=(self.img_size, self.img_size, 3))
-
-        old_vgg.trainable = False
-        # Create the model
-        model = keras.Sequential()
-        # Add the vgg convolutional base model
-        model.add(old_vgg)
-        # Add new layers
-        model.add(Flatten())
-        model.add(Dense(4096, activation='relu'))
-        model.add(Dropout(0.2))
-        model.add(Dense(512, activation='relu'))
-        model.add(Dense(1, activation='sigmoid', activity_regularizer=tf.keras.regularizers.l2(1e-5)))  # sigmoid or relu
-        opt = Adam(learning_rate=self.learning_rate)  # 0.001 default
-        model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
-        print(model.summary())
+        x = base_model.output
+        x = GlobalAveragePooling2D()(x)
+        x = Dense(4096)(x)
+        x = BatchNormalization()(x)
+        x = Activation("relu")(x)
+        x = Dropout(0.5)(x)
+        x = Dense(4096)(x)
+        x = BatchNormalization()(x)
+        x = Activation("relu")(x)
+        x = Dropout(0.5)(x)
+        #x = Dense(128)(x)
+        #x = BatchNormalization()(x)
+        #x = Activation("relu")(x)
+        #x = Dropout(0.5)(x)
+        prediction = Dense(1, activation=self.activation_function)(x)
+        model = Model(inputs=base_model.input, outputs=prediction)
+        adam = Adam(lr=self.learning_rate, decay=0.0, epsilon=None)
+        model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
         return model
 
     def get_resnet_model(self):
-
-        if os.path.isfile(self.name_model) and os.path.isfile(self.name_logger) :
-            print("ResNet50 is already train")
-            return load_model(self.name_model)
-
-        base_model = ResNet50(weights='imagenet', include_top=False)
+        self.head_network = "3x128"
+        flag, checkpoint_path = self.check_if_already_train()
+        if flag:
+            return load_model(checkpoint_path)
+        base_model = ResNet50(weights='imagenet', include_top=False,  input_tensor=Input(shape=(self.img_size,self.img_size,3)))
 
         for layer in base_model.layers:
             layer.trainable = False
 
         x = base_model.output
-        x = GlobalMaxPooling2D()(x)
-        x = Dense(1024, activation='relu')(x)
-        x = Dense(1024, activation='relu')(x)
-        x = Dense(512, activation='relu')(x)
-        x = Dense(1, activation=utils.FUNCTION_RESNET)(x)
-        model = Model(inputs=base_model.input, outputs=x)
-        print(model.summary())
-        adam = Adam(lr=self.learning_rate)
+        x = GlobalAveragePooling2D()(x)
+        x = Dense(128)(x)
+        x = BatchNormalization()(x)
+        x = Activation("relu")(x)
+        x = Dropout(0.5)(x)
+        x = Dense(128)(x)
+        x = BatchNormalization()(x)
+        x = Activation("relu")(x)
+        x = Dropout(0.5)(x)
+        x = Dense(128)(x)
+        x = BatchNormalization()(x)
+        x = Activation("relu")(x)
+        x = Dropout(0.5)(x)
+        prediction = Dense(1, activation=self.activation_function)(x)
+        model = Model(inputs=base_model.input, outputs=prediction)
+        adam = Adam(lr=self.learning_rate, decay=0.0, epsilon=None)
         model.compile(optimizer=adam, loss='binary_crossentropy', metrics=['accuracy'])
-
-        return model
-
-    def get_xception_model(self):
-
-        base_model = tf.keras.applications.Xception(
-            weights='imagenet',  # Load weights pre-trained on ImageNet.
-            input_shape=(229, 229, 3),
-            include_top=False)  # Do not include the ImageNet classifier at the top.
-        base_model.trainable = False
-        inputs = keras.Input(shape=(229, 229, 3))
-        x = base_model(inputs, training=False)
-        # Convert features of shape `base_model.output_shape[1:]` to vectors
-        x = keras.layers.GlobalAveragePooling2D()(x)
-        # A Dense classifier with a single unit (binary classification)
-        outputs = keras.layers.Dense(1)(x)
-        model = keras.Model(inputs, outputs)
-        model.compile(optimizer=keras.optimizers.Adam(),
-                      loss=keras.losses.BinaryCrossentropy(from_logits=True),
-                      metrics=[keras.metrics.BinaryAccuracy()])
         return model
 
     def get_inception_v3_model(self):
+        self.head_network = "4x128_LOAD_CORRECT______2"
+        flag, checkpoint_path = self.check_if_already_train()
+        if flag:
+            model = load_model(checkpoint_path)
+            plot_model(model, to_file='model_plot.png', show_shapes=False,
+                       show_layer_names=True)
 
-        base_model = tf.keras.applications.InceptionV3(weights='imagenet', input_shape=(299, 299, 3), include_top=False)  # Do not include the ImageNet classifier at the top.
+            return model
+
+        base_model = tf.keras.applications.InceptionV3(weights='imagenet', input_shape=(self.img_size, self.img_size, 3), include_top=False)
         base_model.trainable = False
-
-        inputs = keras.Input(shape=(299, 299, 3))
-
-        x = base_model(inputs, training=False)
-        # Convert features of shape `base_model.output_shape[1:]` to vectors
-        x = keras.layers.GlobalAveragePooling2D()(x)
-        x = keras.layers.Dense(512)(x)
-        # A Dense classifier with a single unit (binary classification)
-        outputs = keras.layers.Dense(1)(x)
-        model = keras.Model(inputs, outputs)
-        model.compile(optimizer=keras.optimizers.Adam(),
-                      loss=keras.losses.BinaryCrossentropy(from_logits=True),
-                      metrics=[keras.metrics.BinaryAccuracy()])
+        #inputs = keras.Input(shape=(self.img_size, self.img_size, 3))
+        #x = base_model(inputs, training=False)
+        x = base_model.output
+        x = GlobalAveragePooling2D()(x)
+        x = Dense(128, activation="relu")(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.5)(x)
+        x = Dense(128, activation="relu")(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.5)(x)
+        x = Dense(128, activation="relu")(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.5)(x)
+        x = Dense(128, activation="relu")(x)
+        x = BatchNormalization()(x)
+        x = Dropout(0.5)(x)
+        prediction = Dense(1, activation=self.activation_function)(x)
+        model = Model(inputs=base_model.input, outputs=prediction)
+        adam = Adam(lr=self.learning_rate, decay=0.0, epsilon=None)
+        model.compile(optimizer=adam, loss="binary_crossentropy", metrics=["accuracy"])
+        plot_model(model, to_file='/home/bembo/Scrivania/detect_melanoma/model_plot.png', show_shapes=True, show_layer_names=False)
         return model
+        
+    def scheduler(self, epoch, lr):
+        with open(self.path_model_tmp+self.head_name+".txt", "a") as f:
+            f.write("{}\t{}\n".format(epoch,lr))
+        return lr
 
-    def fit_model(self, model, train_ds, val_ds, csv_logger, model_checkpoint_callback):
-        #weights = compute_class_weight('balanced', np.unique(y_train), y_train)
-        #w = {0: weights[0], 1:weights[1]}
-        #print(w)
-        #dimezza learning reate ogni 3 epoche se val_accuracy non incrementa
-        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor="val_accuracy", factor=0.5, patience=3, verbose=0, mode="max")
+    def fit_model(self, model, X_train, X_test, y_train, y_test, csv_logger, model_checkpoint_callback):
+        reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor="val_accuracy", factor=0.1, patience=3, verbose=0, mode="max")
         early_stopping = tf.keras.callbacks.EarlyStopping(monitor="val_accuracy", patience=8, mode="max", restore_best_weights=True)
-
-        model.fit(train_ds,
-                  #batch_size=self.batch_size,
+        lr_scheduler = tf.keras.callbacks.LearningRateScheduler(self.scheduler)
+        model.fit(X_train, y_train,
+                  batch_size=self.batch_size,
                   verbose=1,
                   epochs=self.epochs,
-                  validation_data=val_ds,
+                  validation_data=(X_test, y_test),
                   shuffle=False,
-                  #class_weight=w,
-                  callbacks=[csv_logger, model_checkpoint_callback, reduce_lr, early_stopping])
+                  callbacks=[csv_logger, model_checkpoint_callback, reduce_lr, early_stopping, lr_scheduler])
 
-    def train(self, model, train_ds, val_ds, is_fine_tuning):
-        if is_fine_tuning:
-            name_model = self.name_model.split(".")[0]+"FineTuning"+self.name_model.split(".")[1]
-            name_logger = self.name_logger.split(".")[0]+"FineTuning"+self.name_logger.split(".")[1]
+    def train(self, model, X_train, X_test, y_train, y_test, is_all_unfrozen):
+        lr = self.learning_rate
+        if is_all_unfrozen:
+            model.trainable = True
+            lr = utils.LR_UNFROZEN
+            opt = Adam(learning_rate=lr)  # 0.001 default
+            model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
+            is_frozen = "unfrozen"
         else :
-            name_model = self.name_model.split(".")[0]+"Transfer_Learning"+self.name_model.split(".")[1]
-            name_logger = self.name_logger.split(".")[0]+"Transfer_Learning"+self.name_logger.split(".")[1]
-
-        if os.path.isfile(name_model) and os.path.isfile(name_logger):
-            print("The model : {}\n is already train with this params".format(name_model))
-            return
-
-        csv_logger = CSVLogger(self.name_logger, append=True)
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=self.checkpoint_path,
-            save_weights_only=True,
-            monitor='val_accuracy',
-            mode='max',
-            save_best_only=True)
-
+            is_frozen = "frozen"
+        if self.head_name != "unet":
+            checkpoint_path = self.checkpoint_path + "{}_{}_{}_lr_{}_bs_{}_{}_{}/".format(self.head_name, self.activation_function, self.cv_or_unet_preprocessing, str(lr).replace(".","-"), self.batch_size, is_frozen, self.head_network)
+        else:
+            checkpoint_path = self.checkpoint_path + "{}_{}_{}_lr_{}_bs_{}/".format(self.head_name, self.activation_function, self.cv_or_unet_preprocessing, str(lr).replace(".","-"), self.batch_size)
+        self.make_dirs(checkpoint_path)
+        print(model.summary())
+        self.path_model_tmp = checkpoint_path
+        
+        class ModelCheckpoint_tweaked(tf.keras.callbacks.ModelCheckpoint):
+            def __init__(self,
+                   filepath,
+                   monitor='val_loss',
+                   verbose=0,
+                   save_best_only=False,
+                   save_weights_only=False,
+                   mode='auto',
+                   save_freq='epoch',
+                   options=None,
+                   **kwargs):
+        
+                super(ModelCheckpoint_tweaked, self).__init__(filepath,
+                   monitor,
+                   verbose,
+                   save_best_only,
+                   save_weights_only,
+                   mode,
+                   save_freq,
+                   options,
+                   **kwargs)
+        
+        csv_logger = CSVLogger(checkpoint_path+"logger.csv", append=True)
+        
+        cb_model_checkpoint = ModelCheckpoint_tweaked(checkpoint_path,
+                                              monitor='val_accuracy',
+                                              save_best_only=True,
+                                              mode='max',
+                                              verbose=1)
         if tf.test.is_gpu_available():
             with tf.device('/device:GPU:0'):
                 print("Work with GPU")
-                self.fit_model(model,train_ds, val_ds, csv_logger, model_checkpoint_callback)
+                self.fit_model(model, X_train, X_test, y_train, y_test, csv_logger, cb_model_checkpoint)
         else:
             print("Work with CPU")
-            self.fit_model(model, train_ds, val_ds, csv_logger, model_checkpoint_callback)
-
-        model.save(name_model)
-        print("Model {}\ncsv logger {} are saved".format(name_model, name_logger))
+            self.fit_model(model, X_train, X_test, y_train, y_test, csv_logger, cb_model_checkpoint)

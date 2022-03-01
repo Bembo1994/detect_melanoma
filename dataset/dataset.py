@@ -8,6 +8,9 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from preprocessing import preprocess_image
 from tensorflow.keras.models import load_model
 from machine_learning import neural_network
+from PIL import Image
+from tensorflow.keras.utils import normalize
+import glob
 import os
 import json
 import cv2
@@ -23,29 +26,19 @@ import itertools
 
 class Dataset():
 
-    def __init__(self):
-        #self.limit = utils.LIMIT_IMAGES
+    def __init__(self, cv_or_unet):
         self.real_path = os.path.dirname(os.path.realpath(__file__))
         self.savePath = self.real_path+"/ISICArchive/"
         self.segmentation_path = self.savePath + "Segmentation/"
         self.classification_path = self.savePath + "Classification/"
-        # Initialize the API; no login is necessary for public data
+        self.xai_path = self.savePath + "Explainable_ai_abcd/"
         self.api = ISICApi()
         self.make_dirs(self.savePath)
         self.make_dirs(self.segmentation_path)
         self.make_dirs(self.classification_path)
-        self.image_directory = self.segmentation_path + 'img/'
-        self.mask_directory = self.segmentation_path + 'mask/'
-        self.make_dirs(self.mask_directory)
-        self.make_dirs(self.image_directory)
-
-        #self.img_for_segmentation = set()
-        #self.num_sample_for_segmentation = utils.LIMIT_IMAGES_SEGMENTATION_DOWNLOAD
         self.preprocessor = preprocess_image.Preprocessor()
         self.size_test_set = utils.SIZE_TEST_SET
-
-        self.benign_used = set()
-        self.malignant_used = set()
+        self.cv_or_unet = cv_or_unet
 
     def make_dirs(self,path):
         if not os.path.exists(path):
@@ -111,21 +104,20 @@ class Dataset():
             df_c.to_csv(self.savePath + 'dataframe_cleaned_classification.csv',index=False)
             df_s.to_csv(self.savePath + 'dataframe_cleaned_segmentation.csv', index=False)
 
-    #METTI CONTROLLO PRIMA DI VEDERE SE ESISTE IL FILE
     def download_dataset_classification(self):
 
         if os.path.isfile(self.savePath+'dataframe_cleaned_classification.csv'):
             df = pd.read_csv(self.savePath+'dataframe_cleaned_classification.csv')
         else:
             sys.exit("ERROR : Dataframe is not saved")
+        if len(os.listdir(self.classification_path)) > 0:
+            print("Dataset already download")
+            return
 
-        #df = df.set_index("dataset.name")
-        #df = df.drop(["SONIC"])     #the images of this class are full of artifacts, good for segmentation
-        #df = df.reset_index()
+        df = df.set_index("dataset.name")
+        df = df.drop(["SONIC"])     #the images of this class are full of artifacts, good for segmentation
+        df = df.reset_index()
 
-        for n in df["dataset.name"].unique():
-            self.make_dirs(self.classification_path + n +"/benign")
-            self.make_dirs(self.classification_path + n + "/malignant")
         print('Checking images')
         for i, name in enumerate(df["name"]):
             if i%1000 == 0 and i > 0:
@@ -135,7 +127,6 @@ class Dataset():
             ds_name = df.iloc[i]["dataset.name"]
             b_or_m = df.iloc[i]["meta.clinical.benign_malignant"]
             path = self.classification_path + ds_name + "/" + b_or_m + "/"
-            #if len(os.listdir(path)) <= utils.NUMBER_IMG_FOR_CLASS :
             imageFileOutputPath = os.path.join(path, name_ext)
             if not (os.path.isfile((imageFileOutputPath))):
                 imageFileResp = self.api.get('image/%s/download' % id)
@@ -148,10 +139,13 @@ class Dataset():
     def download_dataset_segmentation(self):
         if not os.path.isfile(self.savePath+'dataframe_cleaned_segmentation.csv') :
             sys.exit("ERROR : Before download the dataset")
+        if len(os.listdir(self.mask_directory)) == len(os.listdir(self.image_directory)): #self.image_directory eliminata
+            if len(os.listdir(self.mask_directory)) > 0 and len(os.listdir(self.image_directory)) > 0:
+                print("Dataset for segmentation already download")
+                return
+
         df = pd.read_csv(self.savePath+'dataframe_cleaned_segmentation.csv')
         for i, img_id in enumerate(df["_id"]) :
-            if i%1000==0 and i >0:
-                print("Images Segmentation downloading : {}".format(i))
             name = df.iloc[i]["name"]
             flag = False
             if not os.path.isfile(self.mask_directory+"%s.tiff" % name) and not os.path.isfile(self.image_directory+"%s.tiff" % name):
@@ -160,11 +154,15 @@ class Dataset():
                 segmentation = self.api.getJson('segmentation?imageId=' + img_id)
                 if len(segmentation)>0: #check if image mask exists
                     imageFileResp_img = self.api.get('image/%s/download' % img_id)
+
                     imageFileResp_seg = self.api.get('segmentation/%s/mask' % segmentation[0]['_id'])
+
                     imageFileResp_seg.raise_for_status()
                     imageFileResp_img.raise_for_status()
+
                     imageFileOutputPath_seg = os.path.join(self.segmentation_path+"mask/", '%s.tiff' % name)
                     imageFileOutputPath_img = os.path.join(self.segmentation_path+"img/", '%s.tiff' % name)
+
                     with open(imageFileOutputPath_seg, 'wb') as imageFileOutputStream_seg:
                         for chunk in imageFileResp_seg:
                             imageFileOutputStream_seg.write(chunk)
@@ -186,7 +184,6 @@ class Dataset():
                 random.shuffle(combinations)
                 for _ in range(3):
                     c = random.choice(combinations)
-                    # grab the dimensions of the image and calculate the center of the image
                     (h, w) = img.shape[:2]
                     (cX, cY) = (w // 2, h // 2)
                     M = cv2.getRotationMatrix2D((cX, cY), c[0], 1.0)
@@ -194,163 +191,165 @@ class Dataset():
                     adjusted = cv2.convertScaleAbs(rotated, alpha=1, beta=c[1])
                     flipped = cv2.flip(adjusted, c[2])
                     combinations.remove(c)
-                    name = "train/"+name_class+"/rotation_{}_dark_{}_flip_{}".format(c[0], c[1], c[2])
-                    cv2.imwrite(self.classification_path + name + i, cv2.cvtColor(flipped, cv2.COLOR_BGR2RGB))
-
-        data_to_aug = os.listdir(self.classification_path+"train/malignant/")
+                    name = "train/"+name_class+"/rotation_{}_dark_{}_flip_{}_".format(c[0], c[1], c[2])
+                    cv2.imwrite(self.classification_path + name + i, cv2.cvtColor(flipped, cv2.COLOR_RGB2BGR))
+        data_to_aug = os.listdir(self.classification_path+"train/benign/")
         aug(data_to_aug, self.classification_path+"train/malignant/")
         data_to_aug = os.listdir(self.classification_path+"train/benign/")
         aug(data_to_aug, self.classification_path+"train/benign/")
 
-    '''
-    def get_dataset_segmentation(self, is_for_test_set):
+    def get_dataset_segmentation(self, is_test):
+        if is_test:
+            image_directory = self.segmentation_path+'test/img/'
+            mask_directory = self.segmentation_path+'test/mask/'
+        else:
+            image_directory = self.segmentation_path+'train/img/'
+            mask_directory = self.segmentation_path+'train/mask/'
 
-        dataset = []
-        label = []
-
-        images = os.listdir(self.image_directory)
-        masks = os.listdir(self.mask_directory)
-        size = utils.IMG_SIZE_UNET
-
-        if is_for_test_set :
-            images = images[-self.size_test_set:]
-            masks = masks[-self.size_test_set:]
-        else :
-            images = images[:-self.size_test_set]
-            masks = masks[:-self.size_test_set]
-
-        for image_name in images:
-            image = cv2.imread(self.image_directory + image_name, 0)
+        image_names = glob.glob(image_directory+"*.tiff")
+        mask_names = glob.glob(mask_directory + "*.tiff")
+        image_dataset = []
+        print(len(image_names))
+        for k in image_names:
+            image = cv2.imread(k, 0)
             image = Image.fromarray(image)
-            image = image.resize((size, size))
-            dataset.append(np.array(image))
+            image = image.resize((256, 256))
+            image_dataset.append(np.array(image))
 
-        for image_name in masks:
-            image = cv2.imread(self.mask_directory + image_name, 0)
+        mask_dataset = []
+        for k in mask_names:
+            image = cv2.imread(k, 0)
             image = Image.fromarray(image)
-            image = image.resize((size, size))
-            label.append(np.array(image))
+            image = image.resize((256, 256))
+            mask_dataset.append(np.array(image))
 
-        dataset, label = shuffle(dataset, label, random_state=71)
-        dataset = np.array(dataset)
-        label = np.array(label)
         # Normalize images
-        dataset = np.expand_dims(normalize(np.array(dataset), axis=1), 3)
+        image_dataset = np.expand_dims(normalize(np.array(image_dataset), axis=1), 3)
         # D not normalize masks, just rescale to 0 to 1.
-        label = np.expand_dims((np.array(label)), 3) / 255.
-
-        X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size=0.1, random_state=123)
+        mask_dataset = np.expand_dims((np.array(mask_dataset)), 3) / 255.
+        if is_test:
+            return image_dataset, mask_dataset
+        X_train, X_test, y_train, y_test = train_test_split(image_dataset, mask_dataset, test_size=0.20,
+                                                            random_state=42)
 
         return X_train, X_test, y_train, y_test
 
-    def get_dataset_classification(self, cv_or_unet_preprocessing, is_for_test_set, network):
+    def get_dataset_classification(self, network, is_test, xai_abcd_flag):
         self.preprocessor.net = network
-        dataset = []
-        label = []
-        flag_validation = False
-        if is_for_test_set :
-            path = self.classification_path + "test"
-        else:
-            path = self.classification_path + "train"
-            flag_validation = True
 
-        benigns = os.listdir(path + "/benign/")
-        malignants = os.listdir(path + "/malignant/")
-        random.shuffle(benigns)
-        random.shuffle(malignants)
-        for image_name in benigns:
-            if cv_or_unet_preprocessing == "cv":
-                result = self.preprocessor.cv_preprocessing(path + "/benign/" + image_name)
-            else :
-                result = self.preprocessor.unet_preprocessing(path + "/benign/" + image_name)
-            dataset.append(np.array(result))
-            label.append(0)
-
-        for image_name in malignants:
-            if cv_or_unet_preprocessing == "cv":
-                result = self.preprocessor.cv_preprocessing(path + "/malignant/" + image_name)
-            else :
-                result = self.preprocessor.unet_preprocessing(path + "/malignant/" + image_name)
-            dataset.append(np.array(result))
-            label.append(1)
-
-        dataset, label = shuffle(dataset, label, random_state=71)
-        dataset, label = shuffle(dataset, label, random_state=72)
-        dataset, label = shuffle(dataset, label, random_state=73)
-        print("BENIGN IMAGES : {}".format(list(label).count(0)))
-        print("MALIGNANT IMAGES : {}".format(list(label).count(1)))
-        dataset = np.array(dataset)
-        label = np.array(label)
-
-        if flag_validation:
-            dataset_val = []
-            label_val = []
-            path = self.classification_path + "validation"
-            benigns = os.listdir(path + "/benign/")
-            malignants = os.listdir(path + "/malignant/")
-
-            for image_name in benigns:
-                if cv_or_unet_preprocessing == "cv":
-                    result = self.preprocessor.cv_preprocessing(path + "/benign/" + image_name)
-                else:
-                    result = self.preprocessor.unet_preprocessing(path + "/benign/" + image_name)
-                dataset_val.append(np.array(result))
-                label_val.append(0)
-
-            for image_name in malignants:
-                if cv_or_unet_preprocessing == "cv":
-                    result = self.preprocessor.cv_preprocessing(path + "/malignant/" + image_name)
-                else:
-                    result = self.preprocessor.unet_preprocessing(path + "/malignant/" + image_name)
-                dataset_val.append(np.array(result))
-                label_val.append(1)
-
-            dataset_val, label_val = shuffle(dataset_val, label_val, random_state=71)
-            dataset_val, label_val = shuffle(dataset_val, label_val, random_state=72)
-            dataset_val, label_val = shuffle(dataset_val, label_val, random_state=73)
-            print("BENIGN (VAL) IMAGES : {}".format(list(label_val).count(0)))
-            print("MALIGNANT (VAL) IMAGES : {}".format(list(label_val).count(1)))
-            dataset_val = np.array(dataset_val)
-            label_val = np.array(label_val)
-            return dataset, dataset_val, label, label_val
-        else :
-            return dataset, label
-        #X_train, X_test, y_train, y_test = train_test_split(dataset, label, test_size=0.1, random_state=123)
-        #return X_train, X_test, y_train, y_test
-
-    '''
-    
-    def get_dataset_classification_train(self, network):
         if network == "vgg16":
-            size = (224,224)
+            size = (utils.IMG_SIZE_VGG,utils.IMG_SIZE_VGG)
         elif network == "resnet":
-            size = (224,224)
-        elif network == "xception":
-            size = (229,229)
+            size = (utils.IMG_SIZE_RESNET,utils.IMG_SIZE_RESNET)
         elif network == "inception_v3":
-            size = (299,299)
+            size = (utils.IMG_SIZE_INCEPTION,utils.IMG_SIZE_INCEPTION)
         else:
             sys.exit("Error in size images")
-        datagen = ImageDataGenerator(preprocessing_function=self.preprocessor.cv_preprocessing)
-        train_it = datagen.flow_from_directory(self.classification_path + "train/", classes=['benign', 'malignant'], batch_size=2,
-                                               color_mode="rgb", target_size=size, class_mode="binary")
-        val_it = datagen.flow_from_directory(self.classification_path + "validation/", classes=['benign', 'malignant'], batch_size=2,
-                                               color_mode="rgb", target_size=size, class_mode="binary")
-        return train_it, val_it
 
-    def get_dataset_classification_test(self, network):
-        if network == "vgg16":
-            size = (224,224)
-        elif network == "resnet":
-            size = (224,224)
-        elif network == "xception":
-            size = (229,229)
-        elif network == "inception_v3":
-            size = (299,299)
+        self.preprocessor.size = size
+        image_dataset = []
+        label_dataset = []
+        names = []
+
+        if is_test:
+            app = "test/"
         else:
-            sys.exit("Error in preprocessing images")
-        datagen = ImageDataGenerator(preprocessing_function=self.preprocessor.cv_preprocessing)
-        test_it = datagen.flow_from_directory(self.classification_path + "test/", classes=['benign', 'malignant'], batch_size=2,
-                                               color_mode="rgb", target_size=size, class_mode="binary")
+            app = "train/"
+            if os.path.isfile(self.classification_path+'train_{}.pickle'.format(self.cv_or_unet, size[0])):
+                with open(self.classification_path+'train_{}.pickle'.format(self.cv_or_unet, size[0]), 'rb') as handler:
+                    d = pickle.load(handler)
+                    print("Dataset già esistente, caricamento")
+                    X_train, X_test, y_train, y_test = d["X_train"], d["X_test"], d["y_train"], d["y_test"]
+                for i, image in enumerate(X_train):
+                    X_train[i] = cv2.resize(image, size, interpolation=cv2.INTER_CUBIC)
+                for i, image in enumerate(X_test):
+                    X_test[i] = cv2.resize(image, size, interpolation=cv2.INTER_CUBIC)
+                return X_train, X_test, y_train, y_test
+        if xai_abcd_flag:
+            path_benign_directory = self.xai_path + 'benign/'
+            path_malignant_directory = self.xai_path + 'malignant/'
+        else:
+            path_benign_directory = self.classification_path + app + 'benign/'
+            path_malignant_directory = self.classification_path + app + 'malignant/'
+        benigns = os.listdir(path_benign_directory)
+        malignants = os.listdir(path_malignant_directory)
+        for i, b in enumerate(benigns):
+            if i%1000 == 0:
+                print(i)
+            if self.cv_or_unet == "threshold":
+                k = self.preprocessor.cv_preprocessing(path_benign_directory+b)
+            else:
+                k = self.preprocessor.unet_preprocessing(path_benign_directory+b)
+            image_dataset.append(k)
+            label_dataset.append(0)
+            names.append(b)
 
-        return test_it
+        for i, m in enumerate(malignants):
+            if i%1000==0:
+                print(i)
+            if self.cv_or_unet == "threshold":
+                k = self.preprocessor.cv_preprocessing(path_malignant_directory+m)
+            else:
+                k = self.preprocessor.unet_preprocessing(path_malignant_directory+m)
+            image_dataset.append(k)
+            label_dataset.append(1)
+            names.append(m)
+        tmp = list(zip(image_dataset, label_dataset, names))
+        random.shuffle(tmp)
+        image_dataset, label_dataset, names = zip(*tmp)
+        image_dataset = np.array(image_dataset)
+        label_dataset = np.array(label_dataset)
+        if is_test:
+            return image_dataset, label_dataset, names
+        X_train, X_test, y_train, y_test = train_test_split(image_dataset, label_dataset, test_size=0.20,
+		                                        random_state=42)
+        ds_to_pickle = {"X_train":X_train, "X_test":X_test, "y_train":y_train, "y_test":y_test}
+        with open(self.classification_path+'train_{}_{}.pickle'.format(self.cv_or_unet, size[0]), 'wb') as handle:
+            pickle.dump(ds_to_pickle, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        return X_train, X_test, y_train, y_test
+
+    def get_all_img(self, start_point):
+        self.preprocessor.net = network
+        if network == "vgg16":
+            size = (utils.IMG_SIZE_VGG,utils.IMG_SIZE_VGG)
+        elif network == "resnet":
+            size = (utils.IMG_SIZE_RESNET,utils.IMG_SIZE_RESNET)
+        elif network == "inception_v3":
+            size = (utils.IMG_SIZE_INCEPTION,utils.IMG_SIZE_INCEPTION)
+        else:
+            sys.exit("Error in size images")
+        self.preprocessor.size = size
+        image_dataset = []
+        label_dataset = []
+        names = []
+        path_benign_directory = '/home/bembo/Scrivania/detect_melanoma/dataset/ISICArchive/Classification_totali/train/benign/'
+        path_malignant_directory = '/home/bembo/Scrivania/detect_melanoma/dataset/ISICArchive/Classification_totali/train/malignant/'
+        benigns = os.listdir(path_benign_directory)[start_point:start_point + 100]
+        malignants = os.listdir(path_malignant_directory)[start_point:start_point + 100]
+        for i, b in enumerate(benigns):
+            if i%50 == 0:
+                print(i)
+            if self.cv_or_unet == "threshold":
+                k = self.preprocessor.cv_preprocessing(path_benign_directory+b)
+            else:
+                k = self.preprocessor.unet_preprocessing(path_benign_directory+b)
+            image_dataset.append(k)
+            label_dataset.append(0)
+            names.append(b)
+
+        for i, m in enumerate(malignants):
+            if i%50==0:
+                print(i)
+            if self.cv_or_unet == "threshold":
+                k = self.preprocessor.cv_preprocessing(path_malignant_directory+m)
+            else:
+                k = self.preprocessor.unet_preprocessing(path_malignant_directory+m)
+            image_dataset.append(k)
+            label_dataset.append(1)
+            names.append(m)
+        tmp = list(zip(image_dataset, label_dataset, names))
+        random.shuffle(tmp)
+        image_dataset, label_dataset, names = zip(*tmp)
+        image_dataset = np.array(image_dataset)
+        label_dataset = np.array(label_dataset)
+        return image_dataset, label_dataset, names
