@@ -1,13 +1,7 @@
 from dataset.API.isic_api import ISICApi
 from utils import utils
-from collections import defaultdict
 from sklearn.model_selection import train_test_split
-from PIL import Image
-from tensorflow.keras.utils import normalize
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from preprocessing import preprocess_image
-from tensorflow.keras.models import load_model
-from machine_learning import neural_network
 from PIL import Image
 from tensorflow.keras.utils import normalize
 import glob
@@ -19,9 +13,7 @@ import numpy as np
 import random
 import sys
 import pickle
-import shutil
 from sklearn.utils import shuffle
-from scipy import ndimage
 import itertools
 
 class Dataset():
@@ -39,6 +31,11 @@ class Dataset():
         self.preprocessor = preprocess_image.Preprocessor()
         self.size_test_set = utils.SIZE_TEST_SET
         self.cv_or_unet = cv_or_unet
+        self.limit = utils.LIMIT_IMAGES
+        self.limit_seg = utils.LIMIT_IMAGES_SEGMENTATION_DOWNLOAD
+        self.download_metadata()
+        self.download_dataset_classification()
+        self.download_dataset_segmentation()
 
     def make_dirs(self,path):
         if not os.path.exists(path):
@@ -74,6 +71,9 @@ class Dataset():
                 df = pd.concat([df, data_normalize], axis=1, join="inner")
             #69445 rows (images) x 36 columns
             df.to_csv(self.savePath+'dataframe.csv',index=False)
+            print("Saved file : {}".format(self.savePath + "dataframe.csv"))
+        else:
+            print("File already saved : {}".format(self.savePath + "dataframe.csv"))
 
         if not (os.path.isfile(self.savePath+'dataframe_cleaned_classification.csv') or os.path.isfile(self.savePath+'dataframe_cleaned_segmentation.csv')):
             # cleaning dataframe, get only the nevus and melanoma images
@@ -90,19 +90,21 @@ class Dataset():
             df = df.drop(
                 ["cafe-au-lait macule", "dermatofibroma", "lentigo NOS", "lentigo simplex", "lichenoid keratosis"])
             df = df.drop(["other", "scar", "seborrheic keratosis", "solar lentigo", "squamous cell carcinoma"])
-            tmp = df.reset_index()
-            df_c = tmp.set_index("dataset.name")
-            df_c = df_c.drop(["SONIC"])     #the images of this class are full of artifacts
-            df_c.reset_index()
+            df_c = df[df['meta.acquisition.image_type'].notna()].set_index('meta.acquisition.image_type').drop(["clinical"]).reset_index().set_index("dataset.name").drop("SONIC").reset_index()
+            df_c.to_csv(self.savePath + 'dataframe_cleaned_classification.csv', index=True)
+            print("Saved file : {}".format(self.savePath + "dataframe_cleaned_classification.csv"))
 
             ds_name = list(df["dataset.name"].unique())
             drop_names = list(set(ds_name) - set(["SONIC"]))
-            df_s = tmp.set_index("dataset.name")
+            df_s = df.set_index("dataset.name")
             df_s = df_s.drop(drop_names)
             df_s = df_s.reset_index()
-
-            df_c.to_csv(self.savePath + 'dataframe_cleaned_classification.csv',index=False)
-            df_s.to_csv(self.savePath + 'dataframe_cleaned_segmentation.csv', index=False)
+            df_s.set_index("_id")
+            df_s.to_csv(self.savePath + 'dataframe_cleaned_segmentation.csv', index=True)
+            print("Saved file : {}".format(self.savePath + "dataframe_cleaned_segmentation.csv"))
+        else:
+            print("File already saved : {}".format(self.savePath + "dataframe_cleaned_classification.csv"))
+            print("File already saved : {}".format(self.savePath + "dataframe_cleaned_segmentation.csv"))
 
     def download_dataset_classification(self):
 
@@ -114,27 +116,53 @@ class Dataset():
             print("Dataset already download")
             return
 
-        df = df.set_index("dataset.name")
-        df = df.drop(["SONIC"])     #the images of this class are full of artifacts, good for segmentation
-        df = df.reset_index()
+        #df = df.set_index("dataset.name")
+        #df = df.drop(["SONIC"])     #the images of this class are full of artifacts, good for segmentation
+        #df = df.reset_index()
 
-        print('Checking images')
-        for i, name in enumerate(df["name"]):
-            if i%1000 == 0 and i > 0:
-                print("Images download {}".format(i))
-            name_ext = str(name)+".jpg"
-            id = df.iloc[i]["_id"]
-            ds_name = df.iloc[i]["dataset.name"]
-            b_or_m = df.iloc[i]["meta.clinical.benign_malignant"]
-            path = self.classification_path + ds_name + "/" + b_or_m + "/"
-            imageFileOutputPath = os.path.join(path, name_ext)
-            if not (os.path.isfile((imageFileOutputPath))):
-                imageFileResp = self.api.get('image/%s/download' % id)
-                imageFileResp.raise_for_status()
-                with open(imageFileOutputPath, 'wb') as imageFileOutputStream:
-                    for chunk in imageFileResp:
-                        imageFileOutputStream.write(chunk)
-        print("Downloaded dataset")
+        malignants = df.set_index("meta.clinical.benign_malignant").drop("benign").set_index("_id")
+        benigns = df.set_index("meta.clinical.benign_malignant").drop("malignant").set_index("_id").sample(len(malignants))
+
+        test_malignants = malignants.sample(175)
+        test_benings = benigns.sample(175)
+
+        train_malignants = malignants.drop(set(test_malignants.reset_index()["_id"]))
+        train_benigns = benigns.drop(set(test_benings.reset_index()["_id"]))
+
+        test_malignants = test_malignants.reset_index()
+        test_benings = test_benings.reset_index()
+        train_malignants = train_malignants.reset_index()
+        train_benigns = train_benigns.reset_index()
+
+        def download(df, path):
+            print('Checking images')
+            for i, name in enumerate(df["name"]):
+                if i%1000 == 0 and i > 0:
+                    print("Images download {}".format(i))
+                name_ext = str(name)+".jpg"
+                id = df.iloc[i]["_id"]
+                #b_or_m = df.iloc[i]["meta.clinical.benign_malignant"]
+                #path = self.classification_path + b_or_m + "/"
+                imageFileOutputPath = os.path.join(path, name_ext)
+                if not (os.path.isfile((imageFileOutputPath))):
+                    imageFileResp = self.api.get('image/%s/download' % id)
+                    imageFileResp.raise_for_status()
+                    with open(imageFileOutputPath, 'wb') as imageFileOutputStream:
+                        for chunk in imageFileResp:
+                            imageFileOutputStream.write(chunk)
+            print("Downloaded dataset")
+
+        self.make_dirs(self.classification_path+"train/benign/")
+        self.make_dirs(self.classification_path + "train/malignant/")
+        self.make_dirs(self.classification_path+"test/benign/")
+        self.make_dirs(self.classification_path + "test/malignant/")
+
+        download(test_malignants, self.classification_path + "test/malignant/")
+        download(test_benings, self.classification_path + "test/benign/")
+        download(train_malignants, self.classification_path + "train/malignant/")
+        download(train_benigns, self.classification_path + "train/benign/")
+
+        print("Finish download")
 
     def download_dataset_segmentation(self):
         if not os.path.isfile(self.savePath+'dataframe_cleaned_segmentation.csv') :
@@ -144,7 +172,7 @@ class Dataset():
                 print("Dataset for segmentation already download")
                 return
 
-        df = pd.read_csv(self.savePath+'dataframe_cleaned_segmentation.csv')
+        df = pd.read_csv(self.savePath+'dataframe_cleaned_segmentation.csv').sample(self.limit_seg)
         for i, img_id in enumerate(df["_id"]) :
             name = df.iloc[i]["name"]
             flag = False

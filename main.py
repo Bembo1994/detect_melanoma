@@ -1,17 +1,7 @@
 from dataset import dataset
 from machine_learning import neural_network
-from utils import utils
 from preprocessing import preprocess_image
-from tensorflow.keras.models import load_model
-from matplotlib import pyplot as plt
-from tensorflow.keras.utils import normalize
-import os, random
-import cv2
-import random
-import numpy as np
-import sys
 import argparse
-from tensorflow.keras.callbacks import CSVLogger
 from xai import explainable_ai
 from sklearn.metrics import confusion_matrix
 
@@ -69,11 +59,10 @@ def train_model(network, model, X_train, X_test, y_train, y_test, is_all_unfroze
 def main():
     threshold_or_unet_preprocessing = args.threshold_or_unet_preprocessing
     ds = dataset.Dataset(threshold_or_unet_preprocessing)
-    ''' 
-    Metti i controlli
-    ds.download_dataset_classification()
-    ds.download_dataset_segmentation()
-    ds.data_augmentation()
+
+    #ds.download_dataset_classification()
+    #ds.download_dataset_segmentation()
+    #ds.data_augmentation()
     '''
     train_networks = args.train_networks
     test_networks = args.test_networks
@@ -112,12 +101,12 @@ def main():
         if xai_abcd :
             X_test, y_test, name_imgs = ds.get_dataset_classification(net, True, True)
             test_model(model, X_test, y_test, name_imgs, xai_abcd)
-
+    '''
 if __name__== "__main__" :
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_networks", nargs="+", default=[])
-    parser.add_argument("--test_networks", nargs="+", default=[])
+    #parser.add_argument("--train_networks", nargs="+", default=[])
+    #parser.add_argument("--test_networks", nargs="+", default=[])
     parser.add_argument("--threshold_or_unet_preprocessing", help="(type in 'threshold' or 'unet') Train neural networks with theshold or unet preprocessing?")
-    parser.add_argument("--xai_abcd", help="(True or False) explainable system with abcd properties?")
+    #parser.add_argument("--xai_abcd", help="(True or False) explainable system with abcd properties?")
     args = parser.parse_args()
     main()

@@ -1,4 +1,3 @@
-from tensorflow.keras import backend as K
 from tf_keras_vis.saliency import Saliency
 from tf_keras_vis.utils.scores import BinaryScore, CategoricalScore
 from tf_keras_vis.utils.model_modifiers import ReplaceToLinear, ExtractIntermediateLayer
@@ -7,16 +6,12 @@ from tf_keras_vis.gradcam_plus_plus import GradcamPlusPlus
 from tf_keras_vis.scorecam import Scorecam
 from matplotlib import cm
 import os
-from dataset import dataset
 import random
 from preprocessing import preprocess_image
 import numpy as np
 from matplotlib import pyplot as plt
 from tf_keras_vis.activation_maximization import ActivationMaximization
 from tf_keras_vis.activation_maximization.callbacks import Progress
-from tf_keras_vis.activation_maximization.input_modifiers import Jitter, Rotate2D, Scale
-from tf_keras_vis.activation_maximization.regularizers import Norm, TotalVariation2D
-import tensorflow as tf
 
 class Explainable_AI():
 

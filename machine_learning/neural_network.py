@@ -1,26 +1,17 @@
-from tensorflow.python.keras.utils import tf_utils
-from tensorflow.python.client import device_lib
-from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-from keras.applications.nasnet import NASNetLarge
-from tensorflow.keras.applications.xception import Xception
 from tensorflow.keras.applications.resnet50 import ResNet50
-from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications.vgg16 import VGG16
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
-from tensorflow.keras.layers import Dense, Dropout, Flatten
-from pathlib import Path
+from tensorflow.keras.layers import Dense, Dropout, Flatten, Input, Conv2D, MaxPooling2D, concatenate, Conv2DTranspose, BatchNormalization, Dropout, GlobalAveragePooling2D, Activation
 from tensorflow.keras import layers
 from tensorflow import keras
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, GlobalMaxPooling2D, UpSampling2D, concatenate, Conv2DTranspose, BatchNormalization, Dropout, Lambda, GlobalAveragePooling2D, Activation
 from tensorflow.keras.models import load_model
 from tensorflow.keras.callbacks import CSVLogger
 import os
 import tensorflow as tf
 import numpy as np
 from utils import utils
-import pandas as pd
 from keras.utils.vis_utils import plot_model
 
 
@@ -105,7 +96,7 @@ class NeuralNetworks():
 
         # Build the model
         inputs = Input((self.img_size, self.img_size, self.img_channels))
-        # s = Lambda(lambda x: x / 255)(inputs)   #No need for this if we normalize our inputs beforehand
+
         s = inputs
 
         # Contraction path

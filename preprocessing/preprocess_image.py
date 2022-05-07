@@ -1,11 +1,8 @@
 from tensorflow.keras.utils import normalize
-import tensorflow as tf
-import os
 import cv2
 import numpy as np
 from tensorflow.keras.models import load_model
 from utils import utils
-import sys
 
 class Preprocessor():
 
