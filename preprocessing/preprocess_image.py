@@ -7,7 +7,6 @@ from utils import utils
 class Preprocessor():
 
     def __init__(self):
-        self.unet = load_model("machine_learning/checkpoints/unet_relu_None_lr_0-001_bs_20_rmsprop")#unet_model_colab_3500i_30e_32bs_0005lr_relu.hdf5")
         self.delta = utils.DELTA_PREPROCESSING
         self.net = "inception_v3"
         self.size = (299, 299)
@@ -101,13 +100,14 @@ class Preprocessor():
         return norm_image
 
     def unet_preprocessing(self, path):
+        unet = load_model("machine_learning/checkpoints/unet_relu_None_lr_0-001_bs_20_rmsprop")#unet_model_colab_3500i_30e_32bs_0005lr_relu.hdf5")
         img = self.read_in_rgb(path)
         img_resize = cv2.resize(img, (256,256), interpolation=cv2.INTER_CUBIC)
         img_to_gray = cv2.cvtColor(img_resize, cv2.COLOR_RGB2GRAY)
         img_norm = np.expand_dims(normalize(np.array(img_to_gray), axis=1), 2)#np.expand_dims(img_to_gray, 2)
         img_norm = img_norm[:, :, 0][:, :, None]
         to_input = np.expand_dims(img_norm, 0)
-        prediction_mask = (self.unet.predict(to_input)[0, :, :, 0] > 0.2).astype(np.uint8)
+        prediction_mask = (unet.predict(to_input)[0, :, :, 0] > 0.2).astype(np.uint8)
         pred_mask = cv2.resize(prediction_mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_CUBIC)
         k = self.mole_detect(img, pred_mask, self.delta)
         return k
