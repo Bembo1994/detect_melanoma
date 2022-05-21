@@ -22,6 +22,8 @@ class Dataset():
         self.real_path = os.path.dirname(os.path.realpath(__file__))
         self.savePath = self.real_path+"/ISICArchive/"
         self.segmentation_path = self.savePath + "Segmentation/"
+        self.mask_directory = self.segmentation_path + "mask/"
+        self.image_directory = self.image_directory + "img/"
         self.classification_path = self.savePath + "Classification/"
         self.xai_path = self.savePath + "Explainable_ai_abcd/"
         self.api = ISICApi()
@@ -188,8 +190,8 @@ class Dataset():
                     imageFileResp_seg.raise_for_status()
                     imageFileResp_img.raise_for_status()
 
-                    imageFileOutputPath_seg = os.path.join(self.segmentation_path+"mask/", '%s.tiff' % name)
-                    imageFileOutputPath_img = os.path.join(self.segmentation_path+"img/", '%s.tiff' % name)
+                    imageFileOutputPath_seg = os.path.join(self.mask_directory, '%s.tiff' % name)
+                    imageFileOutputPath_img = os.path.join(self.image_directory, '%s.tiff' % name)
 
                     with open(imageFileOutputPath_seg, 'wb') as imageFileOutputStream_seg:
                         for chunk in imageFileResp_seg:
