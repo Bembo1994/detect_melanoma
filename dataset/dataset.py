@@ -30,6 +30,8 @@ class Dataset():
         self.make_dirs(self.savePath)
         self.make_dirs(self.segmentation_path)
         self.make_dirs(self.classification_path)
+        self.make_dirs(self.mask_directory)
+        self.make_dirs(self.image_directory)
         self.preprocessor = preprocess_image.Preprocessor()
         self.size_test_set = utils.SIZE_TEST_SET
         self.cv_or_unet = cv_or_unet
