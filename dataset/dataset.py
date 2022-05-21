@@ -23,7 +23,7 @@ class Dataset():
         self.savePath = self.real_path+"/ISICArchive/"
         self.segmentation_path = self.savePath + "Segmentation/"
         self.mask_directory = self.segmentation_path + "mask/"
-        self.image_directory = self.image_directory + "img/"
+        self.image_directory = self.segmentation_path + "img/"
         self.classification_path = self.savePath + "Classification/"
         self.xai_path = self.savePath + "Explainable_ai_abcd/"
         self.api = ISICApi()
